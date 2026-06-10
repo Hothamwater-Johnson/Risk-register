@@ -39,12 +39,20 @@ export type ArbResult = {
 
 /** Flip a quote when YES on one platform corresponds to NO on the other. */
 export function invertQuote(q: Quote): Quote {
+  // Prefer the NO side's own bid/ask for the mid; 1−mid drifts when the two
+  // sides carry asymmetric vig.
+  const mid =
+    q.noBid !== null && q.noAsk !== null
+      ? (q.noBid + q.noAsk) / 2
+      : q.mid === null
+        ? null
+        : 1 - q.mid;
   return {
     yesBid: q.noBid,
     yesAsk: q.noAsk,
     noBid: q.yesBid,
     noAsk: q.yesAsk,
-    mid: q.mid === null ? null : 1 - q.mid,
+    mid,
     bidDepthUsd: q.askDepthUsd,
     askDepthUsd: q.bidDepthUsd,
   };

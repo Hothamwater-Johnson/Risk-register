@@ -1,65 +1,104 @@
-import Image from "next/image";
+import Link from "next/link";
+import { EmailSignup } from "@/components/EmailSignup";
+import { EmptyState, PairCard } from "@/components/ui";
+import { explainMover, pct } from "@/lib/explain/copy";
+import { getActivePairs, getMovers, type Mover, type PairView } from "@/lib/queries";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  let pairs: PairView[] = [];
+  let movers: Mover[] = [];
+  let dbDown = false;
+  try {
+    [pairs, movers] = await Promise.all([getActivePairs(15), getMovers(8)]);
+  } catch {
+    dbDown = true;
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    <div className="space-y-8">
+      <section>
+        <h1 className="text-xl font-bold tracking-tight">
+          Where prediction markets disagree
+        </h1>
+        <p className="mt-1 text-sm text-muted">
+          The same events, priced on Kalshi and Polymarket — and what the gaps
+          actually mean.
+        </p>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
+          Biggest gaps right now
+        </h2>
+        {dbDown ? (
+          <EmptyState
+            title="Data isn't flowing yet"
+            hint="The database isn't reachable. Once DATABASE_URL is set and the sync jobs run, gaps show up here."
+          />
+        ) : pairs.length === 0 ? (
+          <EmptyState
+            title="No matched events yet"
+            hint="The matching engine runs every few hours. As soon as the same event is found on both platforms, its gap appears here."
+          />
+        ) : (
+          pairs.map((p) => <PairCard key={p.match.id} pair={p} />)
+        )}
+      </section>
+
+      {movers.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
+            Big movers, last 24h
+          </h2>
+          <div className="divide-y divide-border rounded-xl border border-border bg-card">
+            {movers.map((m) => (
+              <MoverRow key={m.market.id} mover={m} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <EmailSignup source="home" />
+
+      <section className="text-xs text-muted">
+        New to prediction markets?{" "}
+        <Link href="/learn" className="text-accent underline">
+          Start with the 5-minute glossary
+        </Link>{" "}
+        — implied probability, spreads, and why these gaps exist.
+      </section>
     </div>
+  );
+}
+
+function MoverRow({ mover }: { mover: Mover }) {
+  const up = mover.change > 0;
+  const inner = (
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium">{mover.market.question}</p>
+        <p className="mt-0.5 text-xs text-muted">
+          {explainMover(mover.market.question, mover.change).split("—")[1]?.trim() ??
+            ""}
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <p className={`font-mono text-sm font-bold ${up ? "text-positive" : "text-negative"}`}>
+          {up ? "▲" : "▼"} {Math.abs(Math.round(mover.change * 100))}pt
+        </p>
+        <p className="font-mono text-xs text-muted">
+          {pct(mover.mid24hAgo)} → {pct(mover.midNow)}
+        </p>
+      </div>
+    </div>
+  );
+  return mover.pairSlug ? (
+    <Link href={`/e/${mover.pairSlug}`} className="block hover:bg-background/50">
+      {inner}
+    </Link>
+  ) : (
+    <div>{inner}</div>
   );
 }
