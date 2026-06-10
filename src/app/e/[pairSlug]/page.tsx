@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { PaperTradeWidget } from "@/components/PaperTradeWidget";
 import { SpreadChart } from "@/components/SpreadChart";
 import { bestLink, Explainer, GapBadge, PlatformChip } from "@/components/ui";
 import {
@@ -12,6 +13,7 @@ import {
   explainThinBook,
   pct,
 } from "@/lib/explain/copy";
+import { hasPaperAccess } from "@/lib/paper";
 import {
   getPairBySlug,
   getSpreadHistory,
@@ -35,7 +37,10 @@ export default async function PairPage({ params }: Props) {
   if (!pair) notFound();
 
   const top = bestLink(pair);
-  const history = top ? await getSpreadHistory(top.link, 7) : [];
+  const [history, paperUnlocked] = await Promise.all([
+    top ? getSpreadHistory(top.link, 7) : Promise.resolve([]),
+    hasPaperAccess(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -57,6 +62,8 @@ export default async function PairPage({ params }: Props) {
       </section>
 
       {top && <LinkDetail view={top} multi={pair.links.length > 1} />}
+
+      {top && paperUnlocked && <PaperTradeWidget view={top} />}
 
       {top && (
         <section className="rounded-xl border border-border bg-card p-4">

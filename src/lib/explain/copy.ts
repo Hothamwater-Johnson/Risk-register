@@ -102,6 +102,16 @@ export const LEARN_PAGES: Record<
       `For cross-platform gap trading this matters a lot: a 3¢ gap on a 50/50 market can lose half its edge to fees. We always show edges before and after estimated fees, and our fee estimates are just that — estimates. Check each platform's current fee schedule before trading real size.`,
     ],
   },
+  "paper-trading": {
+    title: "What is paper trading?",
+    description:
+      "Practicing with virtual money — and why your paper results are the ceiling, not the floor, of real performance.",
+    body: [
+      `Paper trading means recording the trades you would have made, at the prices you would have paid, without risking money. It's the standard way to test whether a strategy — or a signal like a cross-platform gap — actually works before funding an account.`,
+      `The honest way to paper trade: fill at the ask (not the mid), subtract fees, value open positions at the bid (what you could really sell for), and write down what you expected to make when you entered. Then compare. If realized profits keep coming in below expectations, the signal is weaker than it looks — better to learn that with play money.`,
+      `One warning: paper fills are always too generous. A simulator fills you instantly at the displayed price; a real order faces slippage, partial fills, and prices that move the moment you need them most. Treat paper results as an upper bound, and only take strategies live that look good with margin to spare.`,
+    ],
+  },
   "why-prices-differ": {
     title: "Why do Kalshi and Polymarket prices differ?",
     description:

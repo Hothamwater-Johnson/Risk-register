@@ -161,6 +161,50 @@ export const marketLinks = pgTable(
   ],
 );
 
+export type PaperSide = "yes" | "no";
+export type PaperCloseReason = "manual" | "settled_yes" | "settled_no";
+
+/**
+ * Paper-trading simulator: virtual fills recorded against our own snapshots
+ * so strategies can be tested without money. Leg sides/prices are stored in
+ * each venue's own terms (what you would actually click on that platform);
+ * `marketLinks.outcomeInverted` is applied when opening and settling, never
+ * when valuing a leg against its own venue's snapshot.
+ */
+export const paperTrades = pgTable(
+  "paper_trades",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    marketLinkId: uuid("market_link_id")
+      .notNull()
+      .references(() => marketLinks.id, { onDelete: "cascade" }),
+    // Entry legs: null side = no position on that platform.
+    kalshiSide: text("kalshi_side").$type<PaperSide>(),
+    kalshiEntry: doublePrecision("kalshi_entry"), // prob paid per share
+    polySide: text("poly_side").$type<PaperSide>(),
+    polyEntry: doublePrecision("poly_entry"),
+    shares: doublePrecision("shares").notNull(),
+    entryFeesUsd: doublePrecision("entry_fees_usd").notNull().default(0),
+    // What the dashboard claimed at entry — the baseline for "did it work?".
+    expectedEdge: doublePrecision("expected_edge"), // net edge/share, arbs only
+    entryDisagreement: doublePrecision("entry_disagreement"),
+    thinBookAtEntry: boolean("thin_book_at_entry").notNull().default(false),
+    thesis: text("thesis"),
+    status: text("status").notNull().default("open"), // 'open' | 'closed'
+    openedAt: timestamp("opened_at", { withTimezone: true }).defaultNow(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    exitKalshi: doublePrecision("exit_kalshi"), // per-share value received
+    exitPoly: doublePrecision("exit_poly"),
+    exitFeesUsd: doublePrecision("exit_fees_usd"),
+    realizedPnlUsd: doublePrecision("realized_pnl_usd"),
+    closeReason: text("close_reason").$type<PaperCloseReason>(),
+  },
+  (t) => [
+    index("paper_trades_status_idx").on(t.status, t.openedAt.desc()),
+    index("paper_trades_link_idx").on(t.marketLinkId),
+  ],
+);
+
 export const emailSubscribers = pgTable("email_subscribers", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(), // lowercased before insert
@@ -189,3 +233,4 @@ export type Market = typeof markets.$inferSelect;
 export type PriceSnapshot = typeof priceSnapshots.$inferSelect;
 export type EventMatch = typeof eventMatches.$inferSelect;
 export type MarketLink = typeof marketLinks.$inferSelect;
+export type PaperTrade = typeof paperTrades.$inferSelect;

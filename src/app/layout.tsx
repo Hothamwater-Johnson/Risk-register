@@ -53,6 +53,9 @@ export default function RootLayout({
             <Link href="/learn" className="text-muted hover:text-foreground">
               Learn
             </Link>
+            <Link href="/paper" className="text-muted hover:text-foreground">
+              Paper
+            </Link>
           </nav>
         </header>
         <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6">

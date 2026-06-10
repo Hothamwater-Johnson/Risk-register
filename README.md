@@ -8,6 +8,10 @@ just existing power users.
 **V1 is a public tool** — no login. Mobile-first PWA, weekly email digest,
 SaaS plumbing (auth/billing/alerts) comes later.
 
+📖 **[Owner's manual](docs/MANUAL.md)** — setup, usage, the trading playbook
+(tips, dos & don'ts), and the `/paper` simulator for testing the dashboard's
+signals with virtual money before risking any real ones.
+
 ## How it works
 
 ```
