@@ -338,6 +338,9 @@ export async function searchMarkets(opts: {
 }): Promise<MarketSearchRow[]> {
   const conditions = [eq(markets.status, "open")];
   if (opts.q) conditions.push(ilike(markets.question, `%${opts.q}%`));
+  const limit = opts.limit ?? 100;
+
+  let rows: Market[];
   if (opts.matchedOnly) {
     // Restrict the query itself, not just the page, to linked markets.
     const linked = await db()
@@ -352,15 +355,33 @@ export async function searchMarkets(opts: {
       ...new Set(linked.flatMap((l) => [l.kalshiMarketId, l.polymarketMarketId])),
     ];
     if (linkedIds.length === 0) return [];
-    conditions.push(inArray(markets.id, linkedIds));
+    rows = await db()
+      .select()
+      .from(markets)
+      .where(and(...conditions, inArray(markets.id, linkedIds)))
+      .orderBy(sql`${markets.volume24h} DESC NULLS LAST`)
+      .limit(limit);
+  } else {
+    // Volume units differ per platform (Polymarket: USD, Kalshi: contracts),
+    // so a global volume sort would fill the page with one platform. Rank
+    // within each platform and interleave instead.
+    const topOf = (platformId: number) =>
+      db()
+        .select()
+        .from(markets)
+        .where(and(...conditions, eq(markets.platformId, platformId)))
+        .orderBy(sql`${markets.volume24h} DESC NULLS LAST`)
+        .limit(Math.ceil(limit / 2));
+    const [kalshiRows, polyRows] = await Promise.all([
+      topOf(PLATFORM.kalshi),
+      topOf(PLATFORM.polymarket),
+    ]);
+    rows = [];
+    for (let i = 0; i < Math.max(kalshiRows.length, polyRows.length); i++) {
+      if (kalshiRows[i]) rows.push(kalshiRows[i]);
+      if (polyRows[i]) rows.push(polyRows[i]);
+    }
   }
-
-  const rows = await db()
-    .select()
-    .from(markets)
-    .where(and(...conditions))
-    .orderBy(sql`${markets.volume24h} DESC NULLS LAST`)
-    .limit(opts.limit ?? 100);
 
   const marketIds = rows.map((m) => m.id);
   const eventIds = [...new Set(rows.map((m) => m.eventId).filter(Boolean))] as string[];
