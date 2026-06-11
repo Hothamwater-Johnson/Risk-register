@@ -1,9 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
-    { "path": "/api/jobs/sync-catalog", "schedule": "15 * * * *" },
-    { "path": "/api/jobs/snapshot", "schedule": "*/5 * * * *" },
-    { "path": "/api/jobs/match", "schedule": "45 */6 * * *" },
+    { "path": "/api/jobs/sync-catalog", "schedule": "10 6 * * *" },
+    { "path": "/api/jobs/snapshot", "schedule": "30 6 * * *" },
+    { "path": "/api/jobs/match", "schedule": "50 6 * * *" },
     { "path": "/api/jobs/digest", "schedule": "0 13 * * 1" }
   ]
 }
