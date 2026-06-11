@@ -13,7 +13,6 @@ import { chunk } from "@/lib/http";
 import { runJob } from "@/lib/jobs";
 import { summarizeKalshiBook } from "@/lib/arb/depth";
 import {
-  centsToProb,
   getKalshiMarketsByTickers,
   getKalshiOrderbook,
 } from "@/lib/kalshi/client";
@@ -124,18 +123,18 @@ async function snapshotKalshi(
     for (const q of await getKalshiMarketsByTickers(batch)) {
       const market = byTicker.get(q.ticker);
       if (!market) continue;
-      const yesBid = centsToProb(q.yes_bid);
-      const yesAsk = centsToProb(q.yes_ask);
+      const yesBid = q.yes_bid_dollars;
+      const yesAsk = q.yes_ask_dollars;
       rows.push({
         marketId: market.id,
         ts,
         yesBid,
         yesAsk,
-        noBid: centsToProb(q.no_bid),
-        noAsk: centsToProb(q.no_ask),
-        lastPrice: centsToProb(q.last_price),
+        noBid: q.no_bid_dollars,
+        noAsk: q.no_ask_dollars,
+        lastPrice: q.last_price_dollars,
         mid: yesBid !== null && yesAsk !== null ? (yesBid + yesAsk) / 2 : null,
-        volume24h: q.volume_24h ?? null,
+        volume24h: q.volume_24h_fp ?? null,
       });
     }
   }

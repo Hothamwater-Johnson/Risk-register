@@ -59,9 +59,25 @@ Update when decisions change; date entries when added.
 - **AGENTS.md rule**: this Next.js version has breaking changes — read
   `node_modules/next/dist/docs/` before writing framework-touching code.
 
-## Unverified assumptions (manual §2.5 — check on first real data)
+## Verified against live data (2026-06-11, second session)
 
-- Kalshi base URL (`api.elections.kalshi.com/trade-api/v2`) vs newer docs.
-- Fee coefficients in `src/lib/arb/fees.ts` (both platforms revised in 2026).
-- zod response shapes for both APIs (built from docs, never seen live data).
+- **Kalshi base URL works** (`api.elections.kalshi.com/trade-api/v2`).
+- **Kalshi wire format changed vs training-era docs**: prices are decimal
+  STRINGS in dollars suffixed `_dollars` (dollars in [0,1] == probability),
+  counts are strings suffixed `_fp`; integer-cent fields are gone. Orderbook
+  is `{orderbook_fp: {yes_dollars, no_dollars}}` with [priceStr, sizeStr]
+  levels; candlesticks use `close_dollars` etc. Client normalizes all of it
+  to `number|null` at parse time (`src/lib/kalshi/client.ts`); `centsToProb`
+  removed. Markets have no `category`/`subtitle` fields (event has category).
+- **Fees verified**: Kalshi series API exposes `fee_type`/`fee_multiplier`;
+  every sampled category (incl. Crypto) is `quadratic` × 1 → 0.07 uniform.
+  Polymarket charges taker fees ONLY on sports (0.03, buys only — sells
+  exempt); geopolitics and all other categories currently fee-free.
+  `fees.ts` updated; re-verify periodically ("future expansions" announced).
+- **zod shapes for Gamma + CLOB held against live data** (validation
+  harness: `scripts/validate-live-apis.ts`, run with `pnpm dlx tsx`).
+
+## Remaining unverified assumptions
+
 - Rate limits (designed for ≤5 req/s Kalshi, ≤1 req/s Gamma).
+- Kalshi sports-series maker fees are not modeled (we always price as taker).

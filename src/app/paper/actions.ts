@@ -211,7 +211,9 @@ export async function closePaperTrade(formData: FormData) {
 
   const exitFeesUsd =
     (exitKalshi !== null ? kalshiTakerFeePerShare(exitKalshi, feeCat) * trade.shares : 0) +
-    (exitPoly !== null ? polymarketTakerFeePerShare(exitPoly, feeCat) * trade.shares : 0);
+    (exitPoly !== null
+      ? polymarketTakerFeePerShare(exitPoly, feeCat, { isSell: true }) * trade.shares
+      : 0);
   const proceeds =
     ((exitKalshi ?? 0) + (exitPoly ?? 0)) * trade.shares - exitFeesUsd;
 

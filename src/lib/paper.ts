@@ -92,7 +92,7 @@ export function markToMarket(
     if (bid === null) stale = true;
     else {
       perShare += bid;
-      exitFees += polymarketTakerFeePerShare(bid, feeCat) * t.shares;
+      exitFees += polymarketTakerFeePerShare(bid, feeCat, { isSell: true }) * t.shares;
     }
   }
   if (stale) return { valueUsd: null, unrealizedPnlUsd: null, stale };

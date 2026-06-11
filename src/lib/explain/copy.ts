@@ -98,7 +98,7 @@ export const LEARN_PAGES: Record<
       "Kalshi and Polymarket both charge trading fees that scale with how uncertain the market is.",
     body: [
       `Both platforms charge "taker" fees when your order fills immediately against the order book, and both use formulas that scale with P × (1 − P) — meaning fees are highest on 50/50 markets and shrink toward zero as prices approach 0¢ or 100¢.`,
-      `Kalshi's standard taker fee is about 7% of P × (1 − P) per contract, rounded up to the cent (higher on some categories like crypto). Polymarket introduced taker fees in 2026, also scaled to uncertainty, with some categories exempt. Both platforms pay no fee — or even rebates — for resting "maker" orders.`,
+      `Kalshi's standard taker fee is about 7% of P × (1 − P) per contract, rounded up to the cent, uniform across categories. Polymarket introduced taker fees in 2026 but currently charges them only on sports markets (and only on buys — sells are free); geopolitics and everything else trade fee-free for now. Both platforms pay no fee — or even rebates — for resting "maker" orders.`,
       `For cross-platform gap trading this matters a lot: a 3¢ gap on a 50/50 market can lose half its edge to fees. We always show edges before and after estimated fees, and our fee estimates are just that — estimates. Check each platform's current fee schedule before trading real size.`,
     ],
   },
