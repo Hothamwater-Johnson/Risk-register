@@ -12,7 +12,8 @@ import {
 } from "@/lib/db/schema";
 import { runJob } from "@/lib/jobs";
 import { generateCandidates, type CandidatePair } from "@/lib/matching/candidates";
-import { verifyPairsWithLlm, type PairForLlm } from "@/lib/matching/llm";
+import { verifyPairsWithLlm, type LlmVerdict, type PairForLlm } from "@/lib/matching/llm";
+import { normalizeTitle } from "@/lib/matching/normalize";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -67,7 +68,21 @@ export async function GET(req: Request) {
       polymarketMarkets: marketsByEvent.get(c.polymarketEvent.id) ?? [],
     }));
 
-    const verdicts = await verifyPairsWithLlm(pairs);
+    let verdicts: Map<string, LlmVerdict>;
+    try {
+      verdicts = await verifyPairsWithLlm(pairs);
+    } catch (err) {
+      // LLM unavailable (no key, no credits, outage): degrade to heuristics.
+      // Candidates go straight to the /admin/matches review queue with
+      // naively proposed market links; nothing is auto-confirmed.
+      const queued = await queueHeuristicOnly(candidates, marketsByEvent);
+      return {
+        candidates: candidates.length,
+        llmVerified: 0,
+        queued,
+        llmError: err instanceof Error ? err.message : String(err),
+      };
+    }
 
     let confirmed = 0;
     let queued = 0;
@@ -134,6 +149,92 @@ export async function GET(req: Request) {
       rejected,
     };
   });
+}
+
+/**
+ * LLM-less fallback: queue candidates for human review with naively proposed
+ * links — the single-market case is unambiguous, multi-outcome events link
+ * only where normalized outcome labels coincide uniquely. The reviewer can
+ * invert/reject from /admin/matches; nothing is confirmed automatically.
+ */
+async function queueHeuristicOnly(
+  candidates: CandidatePair[],
+  marketsByEvent: Map<string, Market[]>,
+): Promise<number> {
+  let queued = 0;
+  for (const c of candidates) {
+    const [match] = await db()
+      .insert(eventMatches)
+      .values({
+        kalshiEventId: c.kalshiEvent.id,
+        polymarketEventId: c.polymarketEvent.id,
+        status: "candidate",
+        confidence: null,
+        method: "heuristic",
+        scoreBreakdown: { heuristic: c.breakdown },
+        pairSlug: pairSlug(c.kalshiEvent),
+      })
+      .onConflictDoNothing()
+      .returning({ id: eventMatches.id });
+    if (!match) continue;
+    queued++;
+
+    const links = proposeLinksHeuristically(
+      marketsByEvent.get(c.kalshiEvent.id) ?? [],
+      marketsByEvent.get(c.polymarketEvent.id) ?? [],
+    );
+    if (links.length > 0) {
+      await db()
+        .insert(marketLinks)
+        .values(
+          links.map((l) => ({
+            eventMatchId: match.id,
+            kalshiMarketId: l.kalshiMarketId,
+            polymarketMarketId: l.polymarketMarketId,
+            outcomeInverted: false,
+            status: "candidate",
+            confidence: null,
+          })),
+        )
+        .onConflictDoNothing();
+    }
+  }
+  return queued;
+}
+
+function proposeLinksHeuristically(
+  kalshiMarkets: Market[],
+  polyMarkets: Market[],
+): Array<{ kalshiMarketId: string; polymarketMarketId: string }> {
+  if (kalshiMarkets.length === 1 && polyMarkets.length === 1) {
+    return [
+      {
+        kalshiMarketId: kalshiMarkets[0].id,
+        polymarketMarketId: polyMarkets[0].id,
+      },
+    ];
+  }
+  const labelKey = (m: Market) =>
+    [...normalizeTitle(m.outcomeLabel ?? m.question).tokens].sort().join(" ");
+  const byLabel = (ms: Market[]) => {
+    const map = new Map<string, Market[]>();
+    for (const m of ms) {
+      const key = labelKey(m);
+      if (!key) continue;
+      map.set(key, [...(map.get(key) ?? []), m]);
+    }
+    return map;
+  };
+  const kByLabel = byLabel(kalshiMarkets);
+  const pByLabel = byLabel(polyMarkets);
+  const out: Array<{ kalshiMarketId: string; polymarketMarketId: string }> = [];
+  for (const [key, kms] of kByLabel) {
+    const pms = pByLabel.get(key);
+    if (kms.length === 1 && pms?.length === 1) {
+      out.push({ kalshiMarketId: kms[0].id, polymarketMarketId: pms[0].id });
+    }
+  }
+  return out;
 }
 
 async function loadMarkets(

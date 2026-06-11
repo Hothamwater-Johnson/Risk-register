@@ -23,9 +23,12 @@ Honest record of agent mistakes in this project, so they aren't repeated.
 3. **Ran `pnpm drizzle-kit migrate` expecting it to read `.env.local`.**
    It doesn't (only Next.js loads that file), and after passing the URL
    inline it hung anyway (neon-http websocket limitation under drizzle-kit).
-   Fixed with a one-off script applying each statement via `sql.unsafe()`.
+   Fixed with a one-off script applying each statement individually.
    **Lesson: drizzle-kit needs DATABASE_URL in its own env AND doesn't play
-   well with the neon-http driver here; go straight to the script approach.**
+   well with the neon-http driver here; go straight to the script approach.
+   (Correction 2026-06-11 session 2: use `sql.query(stmt)` — in
+   `@neondatabase/serverless` v1, `sql.unsafe(stmt)` only builds a fragment
+   and silently executes NOTHING when awaited directly.)**
 
 4. **Misdiagnosed the network blocking, twice.** First blamed the Bash
    sandbox and restarted the dev server with the sandbox disabled — same
