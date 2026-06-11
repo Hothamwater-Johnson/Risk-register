@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
 import {
   feeCategoryFor,
@@ -37,8 +38,9 @@ import { latestSnapshots, quoteFromSnapshot } from "@/lib/queries";
  */
 
 export async function paperLogin(formData: FormData) {
-  const token = String(formData.get("token") ?? "");
-  if (!isAdmin(token)) throw new Error("Wrong token");
+  // Trim: phone copy-paste loves trailing whitespace/newlines.
+  const token = String(formData.get("token") ?? "").trim();
+  if (!isAdmin(token)) redirect("/paper?denied=1");
   const store = await cookies();
   store.set(PAPER_COOKIE, token, {
     httpOnly: true,

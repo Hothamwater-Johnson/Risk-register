@@ -24,7 +24,10 @@ const money = (n: number) =>
 
 const signed = (n: number) => (n >= 0 ? `+${money(n)}` : money(n));
 
-export default async function PaperPage() {
+type Props = { searchParams: Promise<{ denied?: string }> };
+
+export default async function PaperPage({ searchParams }: Props) {
+  const { denied } = await searchParams;
   if (!(await hasPaperAccess())) {
     return (
       <div className="mx-auto max-w-sm space-y-4 py-16">
@@ -34,6 +37,12 @@ export default async function PaperPage() {
           token to unlock (it&apos;s stored as a cookie so you only do this
           once per device).
         </p>
+        {denied === "1" && (
+          <p className="text-sm font-medium text-negative">
+            That token didn&apos;t match — check for stray spaces and try
+            again.
+          </p>
+        )}
         <form action={paperLogin} className="flex gap-2">
           <input
             type="password"
