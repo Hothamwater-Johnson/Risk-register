@@ -40,6 +40,39 @@ Update when decisions change; date entries when added.
 - **Jobs**: all under `/api/jobs/*`, bearer `CRON_SECRET`, wrapped by
   `runJob()` → `sync_runs` rows visible at `/admin/health`.
 
+## Production (2026-06-11)
+
+- **Live at https://speedscout.vercel.app** — Vercel project `speed_scout`
+  (id `prj_BS1RQPWUS0zAICyW7Athw2XmPMeh`), Hobby tier, owner's personal
+  account. Production branch = repo default branch =
+  `claude/prediction-market-dashboard-sflw0h` (there is NO `main`).
+  Feature work lands on a session branch and is pushed to both.
+- **Deploying**: push to the production branch (webhook) or POST the
+  project's deploy hook URL (Settings → Git → Deploy Hooks). CLI
+  (`vercel deploy`) uploads get state BLOCKED on this account — avoid.
+- **Hobby tier rejects sub-daily crons in vercel.json** (whole deploy
+  fails). vercel.json crons are daily backstops; the real schedule is
+  the GH Actions `cron-pinger` (10-min snapshots, hourly catalog, 6-h
+  match). It needs one repo secret, CRON_SECRET; APP_BASE_URL is
+  hardcoded with a secret override; it no-ops cleanly if unset.
+- **Secrets**: DATABASE_URL, CRON_SECRET, ADMIN_TOKEN, ANTHROPIC_API_KEY
+  in Vercel project env (set via API after a hand-typed first attempt
+  was mistyped — when a credential mismatch appears, overwrite via API
+  and redeploy; env vars bake in at deploy time). CRON_SECRET also a
+  GitHub Actions repo secret.
+
+## Cross-platform data gotchas (hard-won, do not regress)
+
+- **Volume units are incomparable**: Polymarket `volume24h` is USD;
+  Kalshi `volume_24h_fp` is contract counts. Never sort or threshold
+  across platforms on volume. /markets ranks per platform and
+  interleaves.
+- **Postgres `DESC` sorts NULLs first** and ~10k markets have NULL
+  volume: every volume ordering must be `DESC NULLS LAST` (markets page,
+  snapshot top-N, match-job event selection — all fixed 2026-06-11).
+- **Paper login** trims the pasted token (phone pastes carry trailing
+  whitespace) and redirects to `/paper?denied=1` on mismatch.
+
 ## Infrastructure facts
 
 - **Neon**: project `muddy-night-82322529`, db `neondb`, pooler host

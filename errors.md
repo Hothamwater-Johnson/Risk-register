@@ -54,6 +54,39 @@ Honest record of agent mistakes in this project, so they aren't repeated.
    **Lesson: when a fact is checkable (docs, a 5-minute monitor), check it
    before the user has to act on a "probably."**
 
+## 2026-06-11 (session 2)
+
+7. **"Verified" an auth gate by HTTP status.** Reported /admin/health as
+   working because it returned 200 — the page returns 200 to everyone
+   and shows a login hint when the token is wrong. The Vercel env-var
+   typo was therefore discovered hours later via Unauthorized job calls.
+   **Lesson: verify gates by state-specific content (one marker that
+   only appears authed, one that only appears denied), never by status.**
+
+8. **Sloppy one-off verification snippets produced two false alarms.**
+   `grep -c` counts lines (single-line HTML → max 1) and a re-typed
+   regex pipeline missing its pipe-collapse step both reported freshly
+   deployed, working features as broken. **Lesson: write the extraction
+   snippet once, test it against a known-good page, reuse it verbatim.**
+
+9. **Scattered execution during the deploy firefight** (user: "you are
+   all over the place"). Multiple deploy paths in flight at once,
+   repeated 200KB run-list fetches, premature "it's live" calls.
+   **Lesson: one thread at a time — assess, act once, verify once,
+   report. The stop-and-replan request was warranted.**
+
+10. **`pkill -f vercel` matched the invoking shell's own command line**
+    and killed the verification chain mid-run (exit 144). **Lesson:
+    pkill -f patterns match your own command string; scope to the
+    target binary or use the task's PID.**
+
+11. **Assumed Vercel's GitHub webhook worked because "Connect Git
+    Repository" showed a checkmark.** The link was `sourceless: true`;
+    pushes and deploy-hook jobs died silently for an hour of polling.
+    **Lesson: a green checkmark in a UI is a claim, not a verification —
+    confirm integrations by their observable effect (a deployment
+    object existing), and check the API's view of the resource early.**
+
 ## Standing process rules derived from the above
 
 - Verify product/UI claims against documentation before relaying them.
