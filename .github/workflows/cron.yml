@@ -2,13 +2,10 @@
 # once per day). Delete this once the project moves to Vercel Pro and
 # vercel.json crons take over.
 #
-# DISABLED BY DEFAULT: scheduled runs are skipped until the repository
-# variable CRON_ENABLED is set to "true" (Settings → Secrets and variables →
-# Actions → Variables). Do that only after the app is deployed; otherwise
-# every run fails against a non-existent URL and emails the owner.
-# Also requires repo secrets:
-#   APP_BASE_URL  e.g. https://spreadscout.vercel.app
-#   CRON_SECRET   same value as the Vercel env var
+# Requires ONE repo secret: CRON_SECRET (same value as the Vercel env var).
+# Until that secret exists, scheduled runs no-op successfully — no failure
+# emails. APP_BASE_URL defaults to the production domain; a repo secret of
+# the same name overrides it.
 name: cron-pinger
 
 on:
@@ -26,9 +23,9 @@ on:
 
 jobs:
   ping:
-    # Manual dispatches always run; schedules only once CRON_ENABLED=true.
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.CRON_ENABLED == 'true' }}
     runs-on: ubuntu-latest
+    env:
+      APP_BASE_URL: ${{ secrets.APP_BASE_URL || 'https://speedscout.vercel.app' }}
     steps:
       - name: Decide which job this schedule maps to
         id: pick
@@ -45,6 +42,10 @@ jobs:
           fi
       - name: Trigger job route
         run: |
+          if [ -z "${{ secrets.CRON_SECRET }}" ]; then
+            echo "CRON_SECRET repo secret not set — skipping. Add it under Settings → Secrets and variables → Actions."
+            exit 0
+          fi
           curl --fail-with-body -sS --max-time 290 \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.APP_BASE_URL }}/api/jobs/${{ steps.pick.outputs.job }}"
+            "$APP_BASE_URL/api/jobs/${{ steps.pick.outputs.job }}"
