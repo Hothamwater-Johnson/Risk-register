@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { MATCH_AUTO_CONFIRM, MATCH_LLM_THRESHOLD } from "@/lib/config";
 import { db } from "@/lib/db/client";
 import {
@@ -30,7 +30,7 @@ export async function GET(req: Request) {
         .select()
         .from(events)
         .where(and(eq(events.platformId, platformId), eq(events.status, "open")))
-        .orderBy(desc(events.volume24h))
+        .orderBy(sql`${events.volume24h} DESC NULLS LAST`)
         .limit(MAX_EVENTS_PER_PLATFORM);
 
     const [kalshiEvents, polyEvents, existing] = await Promise.all([

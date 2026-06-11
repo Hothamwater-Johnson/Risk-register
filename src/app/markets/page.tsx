@@ -118,6 +118,7 @@ function FilterLink({
 function MarketRow({ row }: { row: MarketSearchRow }) {
   const platform =
     row.market.platformId === PLATFORM.kalshi ? "kalshi" : "polymarket";
+  const compared = row.pairSlug !== null && row.counterpartProb !== null;
   const inner = (
     <div className="flex items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
@@ -128,13 +129,28 @@ function MarketRow({ row }: { row: MarketSearchRow }) {
             : ""}
         </p>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {row.pairSlug && (
-          <span className="rounded-md bg-positive/10 px-2 py-0.5 text-xs font-medium text-positive">
-            both
-          </span>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {compared ? (
+          <>
+            <PlatformChip
+              platform="kalshi"
+              prob={platform === "kalshi" ? row.prob : row.counterpartProb}
+            />
+            <PlatformChip
+              platform="polymarket"
+              prob={platform === "polymarket" ? row.prob : row.counterpartProb}
+            />
+          </>
+        ) : (
+          <>
+            {row.pairSlug && (
+              <span className="rounded-md bg-positive/10 px-2 py-0.5 text-xs font-medium text-positive">
+                both
+              </span>
+            )}
+            <PlatformChip platform={platform} prob={row.prob} />
+          </>
         )}
-        <PlatformChip platform={platform} prob={null} />
       </div>
     </div>
   );

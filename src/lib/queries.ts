@@ -204,7 +204,7 @@ export async function getMovers(limit = 10): Promise<Mover[]> {
     .select()
     .from(markets)
     .where(eq(markets.status, "open"))
-    .orderBy(desc(markets.volume24h))
+    .orderBy(sql`${markets.volume24h} DESC NULLS LAST`)
     .limit(300);
   const ids = top.map((m) => m.id);
 
@@ -322,6 +322,13 @@ export type MarketSearchRow = {
   market: Market;
   event: Event | null;
   pairSlug: string | null;
+  /** Latest snapshot mid (fallback last trade) in the market's own YES terms. */
+  prob: number | null;
+  /**
+   * Linked market's comparable probability on the other platform, with
+   * outcome inversion applied so both numbers answer the same question.
+   */
+  counterpartProb: number | null;
 };
 
 export async function searchMarkets(opts: {
@@ -331,16 +338,33 @@ export async function searchMarkets(opts: {
 }): Promise<MarketSearchRow[]> {
   const conditions = [eq(markets.status, "open")];
   if (opts.q) conditions.push(ilike(markets.question, `%${opts.q}%`));
+  if (opts.matchedOnly) {
+    // Restrict the query itself, not just the page, to linked markets.
+    const linked = await db()
+      .select({
+        kalshiMarketId: marketLinks.kalshiMarketId,
+        polymarketMarketId: marketLinks.polymarketMarketId,
+      })
+      .from(marketLinks)
+      .innerJoin(eventMatches, eq(marketLinks.eventMatchId, eventMatches.id))
+      .where(inArray(eventMatches.status, [...VISIBLE_MATCH_STATUSES]));
+    const linkedIds = [
+      ...new Set(linked.flatMap((l) => [l.kalshiMarketId, l.polymarketMarketId])),
+    ];
+    if (linkedIds.length === 0) return [];
+    conditions.push(inArray(markets.id, linkedIds));
+  }
 
   const rows = await db()
     .select()
     .from(markets)
     .where(and(...conditions))
-    .orderBy(desc(markets.volume24h))
+    .orderBy(sql`${markets.volume24h} DESC NULLS LAST`)
     .limit(opts.limit ?? 100);
 
+  const marketIds = rows.map((m) => m.id);
   const eventIds = [...new Set(rows.map((m) => m.eventId).filter(Boolean))] as string[];
-  const [eventRows, slugRows] = await Promise.all([
+  const [eventRows, slugRows, linkRows] = await Promise.all([
     eventIds.length
       ? db().select().from(events).where(inArray(events.id, eventIds))
       : Promise.resolve([] as Event[]),
@@ -354,6 +378,25 @@ export async function searchMarkets(opts: {
           .from(eventMatches)
           .where(inArray(eventMatches.status, [...VISIBLE_MATCH_STATUSES]))
       : Promise.resolve([]),
+    marketIds.length
+      ? db()
+          .select({
+            kalshiMarketId: marketLinks.kalshiMarketId,
+            polymarketMarketId: marketLinks.polymarketMarketId,
+            outcomeInverted: marketLinks.outcomeInverted,
+          })
+          .from(marketLinks)
+          .innerJoin(eventMatches, eq(marketLinks.eventMatchId, eventMatches.id))
+          .where(
+            and(
+              inArray(eventMatches.status, [...VISIBLE_MATCH_STATUSES]),
+              or(
+                inArray(marketLinks.kalshiMarketId, marketIds),
+                inArray(marketLinks.polymarketMarketId, marketIds),
+              ),
+            ),
+          )
+      : Promise.resolve([]),
   ]);
   const eventById = new Map(eventRows.map((e) => [e.id, e]));
   const slugByEvent = new Map<string, string>();
@@ -363,12 +406,33 @@ export async function searchMarkets(opts: {
     slugByEvent.set(s.polymarketEventId, s.pairSlug);
   }
 
+  const counterpart = new Map<string, { id: string; inverted: boolean }>();
+  for (const l of linkRows) {
+    const inverted = Boolean(l.outcomeInverted);
+    counterpart.set(l.kalshiMarketId, { id: l.polymarketMarketId, inverted });
+    counterpart.set(l.polymarketMarketId, { id: l.kalshiMarketId, inverted });
+  }
+  const snaps = await latestSnapshots([
+    ...new Set([...marketIds, ...[...counterpart.values()].map((c) => c.id)]),
+  ]);
+  const probOf = (id: string): number | null => {
+    const s = snaps.get(id);
+    return s?.mid ?? s?.lastPrice ?? null;
+  };
+
   return rows
-    .map((m) => ({
-      market: m,
-      event: m.eventId ? (eventById.get(m.eventId) ?? null) : null,
-      pairSlug: m.eventId ? (slugByEvent.get(m.eventId) ?? null) : null,
-    }))
+    .map((m) => {
+      const other = counterpart.get(m.id);
+      const otherProb = other ? probOf(other.id) : null;
+      return {
+        market: m,
+        event: m.eventId ? (eventById.get(m.eventId) ?? null) : null,
+        pairSlug: m.eventId ? (slugByEvent.get(m.eventId) ?? null) : null,
+        prob: probOf(m.id),
+        counterpartProb:
+          otherProb !== null && other?.inverted ? 1 - otherProb : otherProb,
+      };
+    })
     .filter((r) => !opts.matchedOnly || r.pairSlug !== null);
 }
 

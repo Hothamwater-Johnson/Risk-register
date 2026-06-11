@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { SNAPSHOT_TOP_N } from "@/lib/config";
 import { db } from "@/lib/db/client";
 import {
@@ -80,7 +80,7 @@ async function trackedMarkets(): Promise<{
       .select()
       .from(markets)
       .where(and(eq(markets.platformId, platformId), eq(markets.status, "open")))
-      .orderBy(desc(markets.volume24h))
+      .orderBy(sql`${markets.volume24h} DESC NULLS LAST`)
       .limit(SNAPSHOT_TOP_N);
 
   const [kalshiTop, polyTop] = await Promise.all([
