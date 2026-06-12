@@ -42,8 +42,8 @@ CLOB books ── snapshot (5-15m)      └─ /admin/* (review queue, job healt
 1. **Database**: create a free [Neon](https://neon.tech) Postgres, set
    `DATABASE_URL`, then `pnpm drizzle-kit migrate` (or `push` for dev).
 2. **Env**: copy `.env.example` → `.env.local` and fill in `CRON_SECRET`,
-   `ADMIN_TOKEN`, `ANTHROPIC_API_KEY` (matching), optionally Resend keys
-   (digest).
+   `ADMIN_TOKEN`, `ANTHROPIC_API_KEY` (matching), `INVITE_CODE` (tester
+   sign-ups for paper trading), optionally Resend keys (digest).
 3. **Run**: `pnpm install && pnpm dev`
 4. **Deploy**: import the repo on Vercel, add the same env vars.
    - **Pro plan**: `vercel.json` crons just work.

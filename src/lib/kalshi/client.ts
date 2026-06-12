@@ -31,6 +31,13 @@ const KalshiMarket = z.looseObject({
   yes_sub_title: z.string().nullish(),
   no_sub_title: z.string().nullish(),
   status: z.string().optional().default("unknown"),
+  /**
+   * Settlement outcome, "yes" | "no" once status is "finalized" (verified
+   * live 2026-06-11 via scripts/check-kalshi-settlement.ts; the intermediate
+   * "determined" status also carries a result but can still be within its
+   * settlement timer — the settle job only trusts "finalized").
+   */
+  result: z.string().nullish(),
   close_time: z.string().nullish(),
   /** Probabilities in [0,1] after normalization. */
   yes_bid_dollars: fpNum,

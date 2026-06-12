@@ -12,12 +12,13 @@ on:
   schedule:
     - cron: "*/10 * * * *" # snapshot (GH Actions jitter: ±few minutes is fine)
     - cron: "15 * * * *"   # sync-catalog hourly
+    - cron: "25 * * * *"   # settle-paper hourly (after sync-catalog)
     - cron: "45 */6 * * *" # match every 6h
     - cron: "0 13 * * 1"   # digest Monday 13:00 UTC
   workflow_dispatch:
     inputs:
       job:
-        description: "Job to trigger (sync-catalog | snapshot | match | digest)"
+        description: "Job to trigger (sync-catalog | snapshot | match | digest | settle-paper)"
         required: true
         default: "snapshot"
 
@@ -36,6 +37,7 @@ jobs:
             case "${{ github.event.schedule }}" in
               "*/10 * * * *") echo "job=snapshot" >> "$GITHUB_OUTPUT" ;;
               "15 * * * *")   echo "job=sync-catalog" >> "$GITHUB_OUTPUT" ;;
+              "25 * * * *")   echo "job=settle-paper" >> "$GITHUB_OUTPUT" ;;
               "45 */6 * * *") echo "job=match" >> "$GITHUB_OUTPUT" ;;
               "0 13 * * 1")   echo "job=digest" >> "$GITHUB_OUTPUT" ;;
             esac

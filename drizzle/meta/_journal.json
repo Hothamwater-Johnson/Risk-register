@@ -15,6 +15,13 @@
       "when": 1781114516103,
       "tag": "0001_brave_killmonger",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781222287022,
+      "tag": "0002_profiles_settlement",
+      "breakpoints": true
     }
   ]
 }

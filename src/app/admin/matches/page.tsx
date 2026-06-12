@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { revalidatePath } from "next/cache";
-import { desc, eq, not } from "drizzle-orm";
+import { desc, eq, not, sql } from "drizzle-orm";
 import { isAdmin } from "@/lib/config";
 import { db } from "@/lib/db/client";
 import {
@@ -10,6 +10,8 @@ import {
   markets,
 } from "@/lib/db/schema";
 import { inArray } from "drizzle-orm";
+import { cents } from "@/lib/explain/copy";
+import { latestSnapshots, platformUrl } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Match review", robots: "noindex" };
@@ -54,12 +56,18 @@ export default async function MatchReviewPage({ searchParams }: Props) {
     );
   }
 
-  const queue = await db()
-    .select()
-    .from(eventMatches)
-    .where(eq(eventMatches.status, "candidate"))
-    .orderBy(desc(eventMatches.confidence))
-    .limit(25);
+  const [queue, [{ total }]] = await Promise.all([
+    db()
+      .select()
+      .from(eventMatches)
+      .where(eq(eventMatches.status, "candidate"))
+      .orderBy(desc(eventMatches.confidence))
+      .limit(25),
+    db()
+      .select({ total: sql<number>`count(*)::int` })
+      .from(eventMatches)
+      .where(eq(eventMatches.status, "candidate")),
+  ]);
 
   const eventIds = [
     ...new Set(queue.flatMap((m) => [m.kalshiEventId, m.polymarketEventId])),
@@ -76,17 +84,26 @@ export default async function MatchReviewPage({ searchParams }: Props) {
   const allMarketIds = [
     ...new Set(linkRows.flatMap((l) => [l.kalshiMarketId, l.polymarketMarketId])),
   ];
-  const marketList = allMarketIds.length
-    ? await db().select().from(markets).where(inArray(markets.id, allMarketIds))
-    : [];
+  const [marketList, snaps] = await Promise.all([
+    allMarketIds.length
+      ? db().select().from(markets).where(inArray(markets.id, allMarketIds))
+      : Promise.resolve([]),
+    latestSnapshots(allMarketIds),
+  ]);
   const eventById = new Map(eventRows.map((e) => [e.id, e]));
   const marketById = new Map(marketList.map((m) => [m.id, m]));
+  const midOf = (marketId: string): number | null => {
+    const s = snaps.get(marketId);
+    return s?.mid ?? s?.lastPrice ?? null;
+  };
 
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-bold tracking-tight">
         Match review queue{" "}
-        <span className="text-sm font-normal text-muted">({queue.length})</span>
+        <span className="text-sm font-normal text-muted">
+          (showing {queue.length} of {total})
+        </span>
       </h1>
 
       {queue.length === 0 && (
@@ -101,19 +118,51 @@ export default async function MatchReviewPage({ searchParams }: Props) {
           llm?: { reason?: string };
         } | null;
         const links = linkRows.filter((l) => l.eventMatchId === m.id);
+        const firstKalshiMarket = links[0]
+          ? marketById.get(links[0].kalshiMarketId)
+          : undefined;
+        const firstPolyMarket = links[0]
+          ? marketById.get(links[0].polymarketMarketId)
+          : undefined;
         return (
           <div key={m.id} className="rounded-xl border border-border bg-card p-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <p className="text-xs font-semibold text-positive">KALSHI</p>
-                <p className="mt-1 text-sm font-medium">{ke?.title}</p>
+                <p className="mt-1 text-sm font-medium">
+                  {firstKalshiMarket && ke ? (
+                    <a
+                      href={platformUrl(firstKalshiMarket, ke)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:underline"
+                    >
+                      {ke.title} ↗
+                    </a>
+                  ) : (
+                    ke?.title
+                  )}
+                </p>
                 <p className="mt-0.5 text-xs text-muted">
                   closes {ke?.closeTime?.toLocaleDateString() ?? "?"}
                 </p>
               </div>
               <div>
                 <p className="text-xs font-semibold text-accent">POLYMARKET</p>
-                <p className="mt-1 text-sm font-medium">{pe?.title}</p>
+                <p className="mt-1 text-sm font-medium">
+                  {firstPolyMarket && pe ? (
+                    <a
+                      href={platformUrl(firstPolyMarket, pe)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:underline"
+                    >
+                      {pe.title} ↗
+                    </a>
+                  ) : (
+                    pe?.title
+                  )}
+                </p>
                 <p className="mt-0.5 text-xs text-muted">
                   closes {pe?.closeTime?.toLocaleDateString() ?? "?"}
                 </p>
@@ -128,7 +177,16 @@ export default async function MatchReviewPage({ searchParams }: Props) {
 
             {links.length > 0 && (
               <div className="mt-3 space-y-1">
-                {links.map((l) => (
+                {links.map((l) => {
+                  const kMid = midOf(l.kalshiMarketId);
+                  const pMidRaw = midOf(l.polymarketMarketId);
+                  // Show the Polymarket price in canonical (Kalshi-question)
+                  // terms so a glance at the gap means something.
+                  const pMid =
+                    pMidRaw !== null && l.outcomeInverted ? 1 - pMidRaw : pMidRaw;
+                  const gap =
+                    kMid !== null && pMid !== null ? Math.abs(kMid - pMid) : null;
+                  return (
                   <div
                     key={l.id}
                     className="flex items-center justify-between gap-2 text-xs"
@@ -141,6 +199,17 @@ export default async function MatchReviewPage({ searchParams }: Props) {
                         marketById.get(l.polymarketMarketId)?.question}
                       {l.outcomeInverted && " (inverted)"}
                     </span>
+                    <span className="shrink-0 font-mono text-muted">
+                      {kMid !== null ? cents(kMid) : "—"} vs{" "}
+                      {pMid !== null ? cents(pMid) : "—"}
+                      {gap !== null && (
+                        <strong
+                          className={gap >= 0.05 ? "text-amber-600 dark:text-amber-400" : ""}
+                        >
+                          {" "}Δ{cents(gap)}
+                        </strong>
+                      )}
+                    </span>
                     <form action={reviewMatch}>
                       <input type="hidden" name="token" value={token} />
                       <input type="hidden" name="matchId" value={m.id} />
@@ -151,7 +220,8 @@ export default async function MatchReviewPage({ searchParams }: Props) {
                       </button>
                     </form>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 

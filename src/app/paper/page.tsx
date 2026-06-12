@@ -1,15 +1,18 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ClosePreviewButton } from "@/components/ClosePreviewButton";
+import { ProfileSignupForm } from "@/components/ProfileSignupForm";
+import { SpreadChart } from "@/components/SpreadChart";
 import { Explainer } from "@/components/ui";
 import { cents } from "@/lib/explain/copy";
 import {
   getPaperTradeViews,
-  hasPaperAccess,
   paperStats,
   type PaperTradeView,
 } from "@/lib/paper";
+import { getPaperIdentity, identityProfileId } from "@/lib/profile";
+import { getSpreadHistoryRange, type SpreadPoint } from "@/lib/queries";
 import {
-  closePaperTrade,
   deletePaperTrade,
   paperLogin,
   paperLogout,
@@ -28,47 +31,75 @@ type Props = { searchParams: Promise<{ denied?: string }> };
 
 export default async function PaperPage({ searchParams }: Props) {
   const { denied } = await searchParams;
-  if (!(await hasPaperAccess())) {
+  const identity = await getPaperIdentity();
+  if (!identity) {
     return (
-      <div className="mx-auto max-w-sm space-y-4 py-16">
-        <h1 className="text-xl font-bold tracking-tight">Paper trading</h1>
-        <p className="text-sm text-muted">
-          Test the dashboard&apos;s signals with virtual money. Enter the admin
-          token to unlock (it&apos;s stored as a cookie so you only do this
-          once per device).
-        </p>
-        {denied === "1" && (
-          <p className="text-sm font-medium text-negative">
-            That token didn&apos;t match — check for stray spaces and try
-            again.
+      <div className="mx-auto max-w-sm space-y-6 py-16">
+        <div className="space-y-2">
+          <h1 className="text-xl font-bold tracking-tight">Paper trading</h1>
+          <p className="text-sm text-muted">
+            Test the dashboard&apos;s signals with virtual money — your own
+            $1,000 book, real prices, no risk. Sign up with your email and the
+            invite code you were given.
           </p>
-        )}
-        <form action={paperLogin} className="flex gap-2">
-          <input
-            type="password"
-            name="token"
-            placeholder="ADMIN_TOKEN"
-            required
-            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm"
-          />
-          <button className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white">
-            Unlock
-          </button>
-        </form>
+        </div>
+        <ProfileSignupForm />
+        <details className="text-sm">
+          <summary className="cursor-pointer text-xs text-muted">
+            Owner? Unlock with the admin token
+          </summary>
+          {denied === "1" && (
+            <p className="mt-2 text-sm font-medium text-negative">
+              That token didn&apos;t match — check for stray spaces and try
+              again.
+            </p>
+          )}
+          <form action={paperLogin} className="mt-2 flex gap-2">
+            <input
+              type="password"
+              name="token"
+              placeholder="ADMIN_TOKEN"
+              required
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm"
+            />
+            <button className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white">
+              Unlock
+            </button>
+          </form>
+        </details>
       </div>
     );
   }
 
-  const views = await getPaperTradeViews();
+  const whoami =
+    identity.kind === "admin"
+      ? "owner"
+      : (identity.profile.displayName ?? identity.profile.email);
+  const views = await getPaperTradeViews(identityProfileId(identity));
   const stats = paperStats(views);
   const open = views.filter((v) => v.trade.status === "open");
   const closed = views.filter((v) => v.trade.status === "closed");
 
+  // Spread-since-entry charts for open positions, from our own snapshots.
+  const ENTRY_CONTEXT_MS = 6 * 3600_000;
+  const histories = new Map<string, SpreadPoint[]>(
+    await Promise.all(
+      open
+        .filter((v) => v.link && v.trade.openedAt)
+        .map(async (v) => {
+          const from = new Date(v.trade.openedAt!.getTime() - ENTRY_CONTEXT_MS);
+          const points = await getSpreadHistoryRange(v.link!, from);
+          return [v.trade.id, points] as const;
+        }),
+    ),
+  );
+
   return (
     <div className="space-y-6">
-      <div className="flex items-baseline justify-between">
+      <div className="flex items-baseline justify-between gap-3">
         <h1 className="text-xl font-bold tracking-tight">Paper trading</h1>
-        <form action={paperLogout}>
+        <form action={paperLogout} className="flex items-baseline gap-2">
+          <span className="max-w-40 truncate text-xs text-muted">{whoami}</span>
           <button className="text-xs text-muted hover:text-foreground">
             lock
           </button>
@@ -136,7 +167,7 @@ export default async function PaperPage({ searchParams }: Props) {
           </p>
         )}
         {open.map((v) => (
-          <TradeCard key={v.trade.id} view={v} />
+          <TradeCard key={v.trade.id} view={v} history={histories.get(v.trade.id)} />
         ))}
       </section>
 
@@ -155,7 +186,10 @@ export default async function PaperPage({ searchParams }: Props) {
         Simulator fills assume you take the top of the book at the latest
         snapshot (5–15 min old) with no size impact beyond the thin-book flag,
         and fees are the same estimates the dashboard shows. Real fills are
-        worse, never better — treat paper results as an upper bound.
+        worse, never better — treat paper results as an upper bound. When a
+        market officially settles on Kalshi, open positions on it settle
+        themselves within about an hour; the Settled YES/NO buttons are the
+        manual override.
       </p>
     </div>
   );
@@ -195,7 +229,13 @@ function legLabel(
   return `${side.toUpperCase()} ${venue} @ ${cents(entry)}`;
 }
 
-function TradeCard({ view }: { view: PaperTradeView }) {
+function TradeCard({
+  view,
+  history,
+}: {
+  view: PaperTradeView;
+  history?: SpreadPoint[];
+}) {
   const { trade, kalshiMarket, event, mark } = view;
   const isOpen = trade.status === "open";
   const legs = [
@@ -236,9 +276,23 @@ function TradeCard({ view }: { view: PaperTradeView }) {
         </div>
       </div>
 
+      {isOpen && history && history.length >= 2 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs text-muted hover:text-foreground">
+            Both platforms since you entered
+          </summary>
+          <SpreadChart points={history} />
+        </details>
+      )}
+
       {isOpen && (
         <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
-          <TradeAction action={closePaperTrade} tradeId={trade.id} label="Close at market" />
+          <ClosePreviewButton
+            tradeId={trade.id}
+            valueUsd={mark.valueUsd}
+            pnlUsd={mark.unrealizedPnlUsd}
+            exitFeesUsd={mark.exitFeesUsd}
+          />
           <TradeAction
             action={settlePaperTrade}
             tradeId={trade.id}

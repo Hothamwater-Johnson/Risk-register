@@ -25,7 +25,7 @@ Update when decisions change; date entries when added.
 - **Matching**: heuristics (hard veto on differing numeric thresholds) →
   batched Claude verification → auto-confirm at llm ≥ 0.9 + heuristic ≥ 0.7,
   else `/admin/matches` review queue. Manual decisions are terminal.
-- **Paper trading** (2026-06-11, `src/lib/paper.ts`):
+- **Paper trading** (2026-06-11, `src/lib/paper.ts`; reworked 2026-06-12):
   - Leg sides/prices stored in **venue-real terms**; `outcomeInverted`
     applied only at open/settle, never when valuing against a venue's own book.
   - Marked to market at the **bid minus estimated exit fees**, never mids.
@@ -33,10 +33,20 @@ Update when decisions change; date entries when added.
     (intentional glance-to-click slippage).
   - `expectedEdge` recorded at entry → **capture ratio** (realized/promised)
     on `/paper` is the calibration metric for the whole dashboard.
-  - Settlement is **manual** (Settled YES/NO buttons, canonical = Kalshi
-    question). Auto-settlement from catalog sync is a known future task.
-  - Gated by ADMIN_TOKEN via httpOnly cookie (`paper_token`); virtual
-    bankroll `PAPER_STARTING_BANKROLL` (default $1,000).
+  - **Open is idempotent** (2026-06-12, after 5 accidental duplicate opens):
+    server-minted UUID in the form + unique index `paper_trades_idem_uq`;
+    retries return the original fill as a "duplicate" state, key rotates
+    client-side after success. Actions return `useActionState` state, never
+    throw for user errors (prod masks thrown server-action errors).
+  - **Settlement is automatic** (hourly `settle-paper` job) when Kalshi
+    reports status `finalized` + result `yes|no`; the Settled YES/NO buttons
+    remain as the manual override (canonical = Kalshi question). Both paths
+    share `settleOpenTrade()` with a `status='open'` guard (race-safe).
+  - **Identities** (2026-06-12): owner = ADMIN_TOKEN cookie (`paper_token`),
+    book at `profileId NULL`; testers = email + shared `INVITE_CODE` env var
+    → row in `profiles`, HMAC-signed cookie `ss_profile` (key = ADMIN_TOKEN).
+    No email verification by design — each profile gets its own
+    `PAPER_STARTING_BANKROLL` (default $1,000) book.
 - **Jobs**: all under `/api/jobs/*`, bearer `CRON_SECRET`, wrapped by
   `runJob()` → `sync_runs` rows visible at `/admin/health`.
 
@@ -59,7 +69,8 @@ Update when decisions change; date entries when added.
   in Vercel project env (set via API after a hand-typed first attempt
   was mistyped — when a credential mismatch appears, overwrite via API
   and redeploy; env vars bake in at deploy time). CRON_SECRET also a
-  GitHub Actions repo secret.
+  GitHub Actions repo secret. INVITE_CODE (2026-06-12) gates tester
+  paper-trading sign-ups; unset = sign-ups disabled.
 
 ## Cross-platform data gotchas (hard-won, do not regress)
 
@@ -102,6 +113,14 @@ Update when decisions change; date entries when added.
   levels; candlesticks use `close_dollars` etc. Client normalizes all of it
   to `number|null` at parse time (`src/lib/kalshi/client.ts`); `centsToProb`
   removed. Markets have no `category`/`subtitle` fields (event has category).
+- **Kalshi settlement wire format** (verified live 2026-06-12,
+  `scripts/check-kalshi-settlement.ts`): settled markets report status
+  `finalized` + `result: "yes"|"no"` (500-sample had no other values);
+  `status=closed` queries return the intermediate `determined` (result known
+  but settlement timer running — do NOT settle on it); `?status=finalized`
+  is a 400 (use `?status=settled`); `GET /markets?tickers=` DOES return
+  settled tickers, which is what makes the settle-paper job possible
+  (sync-catalog only ever sees open events).
 - **Fees verified**: Kalshi series API exposes `fee_type`/`fee_multiplier`;
   every sampled category (incl. Crypto) is `quadratic` × 1 → 0.07 uniform.
   Polymarket charges taker fees ONLY on sports (0.03, buys only — sells

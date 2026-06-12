@@ -276,7 +276,23 @@ export async function getSpreadHistory(
   link: MarketLink,
   days = 7,
 ): Promise<SpreadPoint[]> {
-  const since = new Date(Date.now() - days * 86_400_000);
+  return getSpreadHistoryRange(link, new Date(Date.now() - days * 86_400_000));
+}
+
+/** Same, over an explicit window — e.g. one paper trade's holding period. */
+export async function getSpreadHistoryRange(
+  link: MarketLink,
+  from: Date,
+  to?: Date | null,
+): Promise<SpreadPoint[]> {
+  const conditions = [
+    inArray(priceSnapshots.marketId, [
+      link.kalshiMarketId,
+      link.polymarketMarketId,
+    ]),
+    sql`${priceSnapshots.ts} >= ${from.toISOString()}`,
+  ];
+  if (to) conditions.push(sql`${priceSnapshots.ts} <= ${to.toISOString()}`);
   const rows = await db()
     .select({
       marketId: priceSnapshots.marketId,
@@ -284,15 +300,7 @@ export async function getSpreadHistory(
       mid: priceSnapshots.mid,
     })
     .from(priceSnapshots)
-    .where(
-      and(
-        inArray(priceSnapshots.marketId, [
-          link.kalshiMarketId,
-          link.polymarketMarketId,
-        ]),
-        sql`${priceSnapshots.ts} >= ${since.toISOString()}`,
-      ),
-    )
+    .where(and(...conditions))
     .orderBy(priceSnapshots.ts);
 
   const byTs = new Map<string, { kalshi: number | null; polymarket: number | null }>();

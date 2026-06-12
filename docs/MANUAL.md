@@ -195,8 +195,15 @@ and keeps score against what was promised.
 
 ### 5.1 Unlock
 
-Visit `/paper`, enter your `ADMIN_TOKEN` once — it's stored as a cookie on
-that device. (Paper trading is personal; visitors can't touch your book.)
+Visit `/paper`. Two ways in, each with its own separate book:
+
+- **Owner**: expand "Unlock with the admin token" and enter `ADMIN_TOKEN`
+  once — stored as a cookie on that device.
+- **Testers**: sign up with an email plus the shared `INVITE_CODE` you give
+  them. No passwords and no verification emails — the email is just a label
+  for their book, and re-entering it signs them back in from any device.
+  Each profile gets its own virtual $1,000. Don't reuse an invite code you
+  care about elsewhere, and rotate it (Vercel env var) to stop new sign-ups.
 
 ### 5.2 Open a trade
 
@@ -223,12 +230,18 @@ Each open trade is marked to market the honest way: legs valued at the
 **bid** (what you could sell for now) minus estimated exit fees — never at
 the mid. Actions per trade:
 
-- **Close at market** — sells both legs at current bids, pays exit fees,
-  realizes the P&L. Use this for convergence trades when the gap closes.
+- **Close at market** — first tap previews what the current bids minus exit
+  fees would net; the confirm tap sells (re-priced server-side at confirm).
+  Use this for convergence trades when the gap closes.
 - **Settled YES / Settled NO** — when the real-world event resolves, click
   the actual outcome (in terms of the Kalshi question). Winning legs pay
-  $1, losing legs $0, no fees. Use this for arbs you "held to settlement".
+  $1, losing legs $0, no fees. Mostly a manual override now: the hourly
+  `settle-paper` job auto-settles open trades when Kalshi reports the
+  market **finalized** with a yes/no result (never on anything murkier).
 - **Delete** — for misclicks; removes the trade from history entirely.
+
+Each open position also has a "Both platforms since you entered" expander —
+the same spread chart as the pair page, but windowed to your holding period.
 
 ### 5.4 Reading the scoreboard
 
@@ -263,8 +276,9 @@ the mid. Actions per trade:
   no size impact beyond the thin-book flag. Real fills are worse.
 - No partial fills, no leg risk (paper arbs always get both sides — real
   ones sometimes don't), no funding friction, no platform outages.
-- Settlement is manual — the simulator doesn't yet detect resolutions, so
-  visit `/paper` when events you hold resolve.
+- Auto-settlement trusts the **Kalshi** verdict for both legs (the canonical
+  question). On a rules-differ pair the platforms can genuinely resolve
+  differently — settle those manually with the real outcomes in mind.
 - **Paper results are an upper bound.** Only take strategies live that
   look good with a wide margin.
 

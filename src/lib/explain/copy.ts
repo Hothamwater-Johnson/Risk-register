@@ -40,6 +40,29 @@ export function explainArb(arb: ArbResult): string {
   return base + caveats;
 }
 
+export const usd2 = (n: number) =>
+  n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+
+/** Echo exactly what a paper trade filled at, so "did it work?" is one glance. */
+export function describeFill(fill: {
+  kalshiSide: "yes" | "no" | null;
+  kalshiEntry: number | null;
+  polySide: "yes" | "no" | null;
+  polyEntry: number | null;
+  shares: number;
+  entryFeesUsd: number;
+  costUsd: number;
+}): string {
+  const legs: string[] = [];
+  if (fill.kalshiSide && fill.kalshiEntry !== null) {
+    legs.push(`${fill.kalshiSide.toUpperCase()} on Kalshi @ ${cents(fill.kalshiEntry)}`);
+  }
+  if (fill.polySide && fill.polyEntry !== null) {
+    legs.push(`${fill.polySide.toUpperCase()} on Polymarket @ ${cents(fill.polyEntry)}`);
+  }
+  return `Filled ${legs.join(" + ")} × ${fill.shares.toLocaleString()} shares — ${usd2(fill.costUsd)} total, including ${usd2(fill.entryFeesUsd)} estimated fees.`;
+}
+
 export function explainThinBook(executableUsd: number): string {
   return `Only about ${usd(executableUsd)} can actually be traded at the displayed price before it moves. Gaps on thin books look like free money but usually evaporate when you try to fill them.`;
 }

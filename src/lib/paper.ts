@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { desc, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
   feeCategoryFor,
   kalshiTakerFeePerShare,
@@ -30,17 +30,18 @@ import { latestSnapshots } from "./queries";
  * expected vs realized.
  */
 
-export const PAPER_COOKIE = "paper_token";
+export { PAPER_COOKIE } from "./profile";
+import { PAPER_COOKIE as PAPER_COOKIE_NAME } from "./profile";
 
 export const PAPER_STARTING_BANKROLL = Number(
   process.env.PAPER_STARTING_BANKROLL ?? 1000,
 );
 
-/** Paper trading is personal: reuse ADMIN_TOKEN, via cookie or explicit token. */
+/** Admin (owner) access: ADMIN_TOKEN via cookie or explicit token. */
 export async function hasPaperAccess(token?: string | null): Promise<boolean> {
   if (isAdmin(token)) return true;
   const store = await cookies();
-  return isAdmin(store.get(PAPER_COOKIE)?.value);
+  return isAdmin(store.get(PAPER_COOKIE_NAME)?.value);
 }
 
 /** Cost basis of one trade in USD, entry fees included. */
@@ -62,8 +63,21 @@ export type TradeMark = {
   /** USD if both legs were sold at current bids, minus estimated exit fees. */
   valueUsd: number | null;
   unrealizedPnlUsd: number | null;
+  /** Per-leg bids and fees behind valueUsd, for the close-at-market preview. */
+  kalshiBid: number | null;
+  polyBid: number | null;
+  exitFeesUsd: number | null;
   /** True when any open leg has no current quote to mark against. */
   stale: boolean;
+};
+
+const EMPTY_MARK: TradeMark = {
+  valueUsd: null,
+  unrealizedPnlUsd: null,
+  kalshiBid: null,
+  polyBid: null,
+  exitFeesUsd: null,
+  stale: false,
 };
 
 export function markToMarket(
@@ -72,33 +86,40 @@ export function markToMarket(
   polySnap: PriceSnapshot | null,
   feeCat: FeeCategory,
 ): TradeMark {
-  if (t.status !== "open") {
-    return { valueUsd: null, unrealizedPnlUsd: null, stale: false };
-  }
+  if (t.status !== "open") return EMPTY_MARK;
   let perShare = 0;
   let exitFees = 0;
   let stale = false;
+  let kalshiBid: number | null = null;
+  let polyBid: number | null = null;
 
   if (t.kalshiSide) {
-    const bid = legBid(t.kalshiSide, kalshiSnap);
-    if (bid === null) stale = true;
+    kalshiBid = legBid(t.kalshiSide, kalshiSnap);
+    if (kalshiBid === null) stale = true;
     else {
-      perShare += bid;
-      exitFees += kalshiTakerFeePerShare(bid, feeCat) * t.shares;
+      perShare += kalshiBid;
+      exitFees += kalshiTakerFeePerShare(kalshiBid, feeCat) * t.shares;
     }
   }
   if (t.polySide) {
-    const bid = legBid(t.polySide, polySnap);
-    if (bid === null) stale = true;
+    polyBid = legBid(t.polySide, polySnap);
+    if (polyBid === null) stale = true;
     else {
-      perShare += bid;
-      exitFees += polymarketTakerFeePerShare(bid, feeCat, { isSell: true }) * t.shares;
+      perShare += polyBid;
+      exitFees += polymarketTakerFeePerShare(polyBid, feeCat, { isSell: true }) * t.shares;
     }
   }
-  if (stale) return { valueUsd: null, unrealizedPnlUsd: null, stale };
+  if (stale) return { ...EMPTY_MARK, kalshiBid, polyBid, stale };
 
   const valueUsd = perShare * t.shares - exitFees;
-  return { valueUsd, unrealizedPnlUsd: valueUsd - tradeCostUsd(t), stale };
+  return {
+    valueUsd,
+    unrealizedPnlUsd: valueUsd - tradeCostUsd(t),
+    kalshiBid,
+    polyBid,
+    exitFeesUsd: exitFees,
+    stale,
+  };
 }
 
 /**
@@ -122,6 +143,35 @@ export function settlementValuePerShare(
   };
 }
 
+/**
+ * Close one open trade at the settled outcome. Shared by the manual Settled
+ * YES/NO buttons and the settle-paper job; the `status = 'open'` guard makes
+ * the two paths race-safe (whoever lands second is a no-op). Returns false
+ * when the trade was already closed.
+ */
+export async function settleOpenTrade(
+  trade: PaperTrade,
+  outcomeInverted: boolean,
+  kalshiYesWon: boolean,
+): Promise<boolean> {
+  const v = settlementValuePerShare(trade, kalshiYesWon, outcomeInverted);
+  const payout = ((v.kalshi ?? 0) + (v.poly ?? 0)) * trade.shares;
+  const updated = await db()
+    .update(paperTrades)
+    .set({
+      status: "closed",
+      closedAt: new Date(),
+      exitKalshi: v.kalshi,
+      exitPoly: v.poly,
+      exitFeesUsd: 0,
+      realizedPnlUsd: payout - tradeCostUsd(trade),
+      closeReason: kalshiYesWon ? "settled_yes" : "settled_no",
+    })
+    .where(and(eq(paperTrades.id, trade.id), eq(paperTrades.status, "open")))
+    .returning({ id: paperTrades.id });
+  return updated.length > 0;
+}
+
 export type PaperTradeView = {
   trade: PaperTrade;
   link: MarketLink | null;
@@ -132,10 +182,18 @@ export type PaperTradeView = {
   mark: TradeMark;
 };
 
-export async function getPaperTradeViews(): Promise<PaperTradeView[]> {
+/** One identity's book: profileId null = the owner's (admin) trades. */
+export async function getPaperTradeViews(
+  profileId: string | null,
+): Promise<PaperTradeView[]> {
   const trades = await db()
     .select()
     .from(paperTrades)
+    .where(
+      profileId === null
+        ? isNull(paperTrades.profileId)
+        : eq(paperTrades.profileId, profileId),
+    )
     .orderBy(desc(paperTrades.openedAt))
     .limit(500);
   if (trades.length === 0) return [];

@@ -67,6 +67,9 @@ export const markets = pgTable(
     noTokenId: text("no_token_id"),
     resolutionRules: text("resolution_rules"),
     status: text("status").notNull().default("open"),
+    // Settlement outcome as reported by the platform ("yes" | "no"), written
+    // only by the settle-paper job — sync-catalog never touches it.
+    result: text("result"),
     closeTime: timestamp("close_time", { withTimezone: true }),
     volume: doublePrecision("volume"),
     volume24h: doublePrecision("volume_24h"),
@@ -161,6 +164,19 @@ export const marketLinks = pgTable(
   ],
 );
 
+/**
+ * Tester profiles: passwordless email + shared invite code, so a few people
+ * can each run their own paper book. No verification — an email here is an
+ * identity claim, not a proof. The owner's own book predates profiles and
+ * lives at profileId = NULL (admin token).
+ */
+export const profiles = pgTable("profiles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  email: text("email").notNull().unique(), // lowercased before insert
+  displayName: text("display_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
 export type PaperSide = "yes" | "no";
 export type PaperCloseReason = "manual" | "settled_yes" | "settled_no";
 
@@ -178,6 +194,13 @@ export const paperTrades = pgTable(
     marketLinkId: uuid("market_link_id")
       .notNull()
       .references(() => marketLinks.id, { onDelete: "cascade" }),
+    // NULL = the owner's book (admin token); set for tester profiles.
+    profileId: uuid("profile_id").references(() => profiles.id, {
+      onDelete: "cascade",
+    }),
+    // Client-generated per-form-render UUID; the unique index makes retries
+    // (double-click, back button) no-ops instead of duplicate positions.
+    idempotencyKey: uuid("idempotency_key"),
     // Entry legs: null side = no position on that platform.
     kalshiSide: text("kalshi_side").$type<PaperSide>(),
     kalshiEntry: doublePrecision("kalshi_entry"), // prob paid per share
@@ -202,6 +225,8 @@ export const paperTrades = pgTable(
   (t) => [
     index("paper_trades_status_idx").on(t.status, t.openedAt.desc()),
     index("paper_trades_link_idx").on(t.marketLinkId),
+    index("paper_trades_profile_idx").on(t.profileId),
+    uniqueIndex("paper_trades_idem_uq").on(t.idempotencyKey),
   ],
 );
 
@@ -228,6 +253,7 @@ export const syncRuns = pgTable(
   (t) => [index("sync_runs_job_started_idx").on(t.job, t.startedAt.desc())],
 );
 
+export type Profile = typeof profiles.$inferSelect;
 export type Event = typeof events.$inferSelect;
 export type Market = typeof markets.$inferSelect;
 export type PriceSnapshot = typeof priceSnapshots.$inferSelect;

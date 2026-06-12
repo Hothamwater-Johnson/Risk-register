@@ -13,7 +13,7 @@ import {
   explainThinBook,
   pct,
 } from "@/lib/explain/copy";
-import { hasPaperAccess } from "@/lib/paper";
+import { getPaperIdentity } from "@/lib/profile";
 import {
   getPairBySlug,
   getSpreadHistory,
@@ -37,9 +37,9 @@ export default async function PairPage({ params }: Props) {
   if (!pair) notFound();
 
   const top = bestLink(pair);
-  const [history, paperUnlocked] = await Promise.all([
+  const [history, identity] = await Promise.all([
     top ? getSpreadHistory(top.link, 7) : Promise.resolve([]),
-    hasPaperAccess(),
+    getPaperIdentity(),
   ]);
 
   return (
@@ -63,7 +63,9 @@ export default async function PairPage({ params }: Props) {
 
       {top && <LinkDetail view={top} multi={pair.links.length > 1} />}
 
-      {top && paperUnlocked && <PaperTradeWidget view={top} />}
+      {top && identity && (
+        <PaperTradeWidget view={top} category={pair.kalshiEvent.category} />
+      )}
 
       {top && (
         <section className="rounded-xl border border-border bg-card p-4">
