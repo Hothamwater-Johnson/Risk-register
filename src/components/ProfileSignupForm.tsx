@@ -42,15 +42,16 @@ export function ProfileSignupForm() {
         disabled={pending}
         className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
       >
-        {pending ? "Signing in…" : "Start paper trading"}
+        {pending ? "Signing in…" : "Start or resume paper trading"}
       </button>
       {state.status === "error" && (
         <p className="text-sm font-medium text-negative">{state.message}</p>
       )}
       <p className="text-xs leading-relaxed text-muted">
-        No password — your email is just a label for your book, and the same
-        email gets you back in from any device. You start with a fresh virtual
-        $1,000.
+        No password needed. New here? You start with a fresh virtual $1,000.
+        Coming back or on a new device? Enter the same email and invite code
+        and you&apos;re signed back into your existing book — nothing is
+        reset.
       </p>
     </form>
   );
