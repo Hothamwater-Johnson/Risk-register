@@ -7,6 +7,7 @@ import {
   type FeeCategory,
 } from "@/lib/arb/fees";
 import { openPaperTrade, type OpenTradeMode, type OpenTradeState } from "@/app/paper/actions";
+import { usd2 } from "@/lib/explain/copy";
 
 export type TradeMode = {
   value: OpenTradeMode;
@@ -29,9 +30,6 @@ export type PaperTradeFormProps = {
 };
 
 const SHARE_PRESETS = [25, 100, 250, 500];
-
-const usd2 = (n: number) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
 const initialState: OpenTradeState = { status: "idle" };
 

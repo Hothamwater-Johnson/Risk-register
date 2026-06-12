@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import {
   feeCategoryFor,
@@ -170,6 +170,15 @@ export async function openPaperTrade(
   }
 
   const profileId = identityProfileId(identity);
+  // Duplicate detection must stay within this identity's book: a replayed
+  // key from another profile (shared phone, pasted link) must neither echo
+  // their fill nor silently swallow this user's open.
+  const ownIdemKey = and(
+    eq(paperTrades.idempotencyKey, idemKey),
+    profileId === null
+      ? isNull(paperTrades.profileId)
+      : eq(paperTrades.profileId, profileId),
+  );
 
   // Same tap twice (double-click, back button, impatient retry)? The unique
   // index on idempotency_key means only the first insert lands; here we catch
@@ -177,7 +186,7 @@ export async function openPaperTrade(
   const [existing] = await db()
     .select()
     .from(paperTrades)
-    .where(eq(paperTrades.idempotencyKey, idemKey))
+    .where(ownIdemKey)
     .limit(1);
   if (existing) return duplicateState(existing, idemKey);
 
@@ -286,12 +295,14 @@ export async function openPaperTrade(
   revalidatePath("/paper");
 
   if (inserted.length === 0) {
-    // Lost a race with our own retry: the key landed between the early check
-    // and this insert. The position exists exactly once — report it.
+    // Lost a race: the key landed between the early check and this insert.
+    // If OUR retry won it, the position exists exactly once — report it. If
+    // the key belongs to another identity (foreign replay), say nothing
+    // about their trade.
     const [row] = await db()
       .select()
       .from(paperTrades)
-      .where(eq(paperTrades.idempotencyKey, idemKey))
+      .where(ownIdemKey)
       .limit(1);
     return row
       ? duplicateState(row, idemKey)

@@ -41,6 +41,15 @@ export async function GET(req: Request) {
       : [];
     const marketByTicker = new Map(marketRows.map((m) => [m.externalId, m]));
 
+    const tradesByKalshiMarket = new Map<string, typeof openTrades>();
+    for (const t of openTrades) {
+      const link = linkById.get(t.marketLinkId);
+      if (!link) continue;
+      const list = tradesByKalshiMarket.get(link.kalshiMarketId) ?? [];
+      list.push(t);
+      tradesByKalshiMarket.set(link.kalshiMarketId, list);
+    }
+
     let finalized = 0;
     let settledTrades = 0;
     let alreadyClosed = 0;
@@ -66,16 +75,15 @@ export async function GET(req: Request) {
         }
 
         finalized++;
+        // App vocabulary is open|closed; Kalshi's "finalized" stays in the
+        // job's gating above. `result` carries the settled outcome.
         await db()
           .update(markets)
-          .set({ status: lm.status, result: lm.result })
+          .set({ status: "closed", result: lm.result })
           .where(eq(markets.id, row.id));
 
         const kalshiYesWon = lm.result === "yes";
-        const tradesOnMarket = openTrades.filter((t) => {
-          const link = linkById.get(t.marketLinkId);
-          return link?.kalshiMarketId === row.id;
-        });
+        const tradesOnMarket = tradesByKalshiMarket.get(row.id) ?? [];
         for (const trade of tradesOnMarket) {
           const link = linkById.get(trade.marketLinkId)!;
           const settled = await settleOpenTrade(trade, link.outcomeInverted, kalshiYesWon);

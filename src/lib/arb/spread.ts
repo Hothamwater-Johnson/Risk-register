@@ -119,7 +119,14 @@ function buildArb(
     kalshiTakerFeePerShare(kalshiLegPrice, feeCat) +
     polymarketTakerFeePerShare(polyLegPrice, feeCat);
 
-  const depths = [yesVenue.askDepthUsd, noVenue.askDepthUsd];
+  // Both venues' depths are stored from the YES perspective: askDepthUsd is
+  // what a YES buy can consume, bidDepthUsd what a YES sell (= NO buy) can.
+  // The NO leg of an arb buys NO, which crosses the BID side of a
+  // YES-perspective book — using ask depth there overstated thin books and
+  // vice versa. (invertQuote already swaps the two, so inverted links
+  // compose correctly with this rule.) Depths are denominated in the YES
+  // side's dollars, so a skewed book is approximate — fine for a $50 gate.
+  const depths = [yesVenue.askDepthUsd, noVenue.bidDepthUsd];
   const executableUsd = depths.some((d) => d === null)
     ? null
     : Math.min(...(depths as number[]));

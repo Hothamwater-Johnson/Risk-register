@@ -2,9 +2,7 @@
 
 import { useState } from "react";
 import { closePaperTrade } from "@/app/paper/actions";
-
-const usd2 = (n: number) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+import { usd2 } from "@/lib/explain/copy";
 
 /**
  * Two-tap close: the first tap shows what closing at the latest snapshot
