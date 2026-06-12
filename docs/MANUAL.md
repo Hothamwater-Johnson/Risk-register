@@ -130,6 +130,9 @@ The anatomy, top to bottom:
 - `/admin/matches?token=…` — review queue for auto-matched pairs: confirm,
   reject, or invert an outcome mapping (YES here = NO there).
 - `/admin/health?token=…` — recent job runs, durations, errors.
+- `/admin/testers?token=…` — everyone who signed up for paper trading:
+  join date, open/closed trade counts, realized P&L, equity, last activity.
+  The owner's book (`profileId NULL`) is not a profile and doesn't appear.
 
 Review the match queue every few days; bad matches are the #1 source of
 fake gaps.

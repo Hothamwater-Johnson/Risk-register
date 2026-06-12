@@ -46,7 +46,10 @@ Update when decisions change; date entries when added.
     book at `profileId NULL`; testers = email + shared `INVITE_CODE` env var
     → row in `profiles`, HMAC-signed cookie `ss_profile` (key = ADMIN_TOKEN).
     No email verification by design — each profile gets its own
-    `PAPER_STARTING_BANKROLL` (default $1,000) book.
+    `PAPER_STARTING_BANKROLL` (default $1,000) book. There is no separate
+    login: the one form on /paper is sign-up AND sign-in (same email +
+    invite code returns the existing book; cookie lives 1 year). Tester
+    roster at `/admin/testers?token=…` (added 2026-06-12).
 - **Jobs**: all under `/api/jobs/*`, bearer `CRON_SECRET`, wrapped by
   `runJob()` → `sync_runs` rows visible at `/admin/health`.
 
@@ -70,7 +73,9 @@ Update when decisions change; date entries when added.
   was mistyped — when a credential mismatch appears, overwrite via API
   and redeploy; env vars bake in at deploy time). CRON_SECRET also a
   GitHub Actions repo secret. INVITE_CODE (2026-06-12) gates tester
-  paper-trading sign-ups; unset = sign-ups disabled.
+  paper-trading sign-ups; unset = sign-ups disabled. SET and live as of
+  2026-06-12 evening — testers are actively signing up; the value is in
+  Vercel env only, never in this repo.
 
 ## Cross-platform data gotchas (hard-won, do not regress)
 
