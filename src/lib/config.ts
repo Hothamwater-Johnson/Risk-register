@@ -50,6 +50,13 @@ export const AUTO_TRADER_STOP_USD = Number(process.env.AUTO_TRADER_STOP_USD ?? 1
 /** Bank a positive mark on rules-differ pairs (real basis risk); default on. */
 export const AUTO_TRADER_CLOSE_RULES_DIFFER =
   process.env.AUTO_TRADER_CLOSE_RULES_DIFFER !== "0";
+/**
+ * Simple shared password for the /admin/auto-trader dashboard, so it's reachable
+ * from the main nav without pasting the long ADMIN_TOKEN. The page is read-only
+ * (no mutations), so this is a convenience gate, not a security boundary — the
+ * ADMIN_TOKEN path still works too. Override in prod via AUTO_TRADER_PASSWORD.
+ */
+export const AUTO_TRADER_PASSWORD = process.env.AUTO_TRADER_PASSWORD ?? "hotham";
 
 /** Heuristic score below which candidate pairs are not sent to the LLM. */
 export const MATCH_LLM_THRESHOLD = 0.5;

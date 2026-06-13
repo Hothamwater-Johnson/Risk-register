@@ -1,4 +1,7 @@
 import type { Metadata } from "next";
+import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { desc, eq } from "drizzle-orm";
 import {
   AUTO_TRADER_CLOSE_RULES_DIFFER,
@@ -6,19 +9,86 @@ import {
   AUTO_TRADER_MAX_OPEN,
   AUTO_TRADER_MAX_PER_PAIR,
   AUTO_TRADER_MIN_EDGE,
+  AUTO_TRADER_PASSWORD,
   AUTO_TRADER_STAKE_USD,
   AUTO_TRADER_STOP_USD,
   AUTO_TRADER_TAKE_PROFIT_USD,
-  isAdmin,
 } from "@/lib/config";
 import { db } from "@/lib/db/client";
 import { syncRuns } from "@/lib/db/schema";
-import { ensureBotProfileId, getPaperTradeViews, paperStats } from "@/lib/paper";
+import {
+  ensureBotProfileId,
+  getPaperTradeViews,
+  hasPaperAccess,
+  paperStats,
+} from "@/lib/paper";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Auto-trader", robots: "noindex" };
 
-type Props = { searchParams: Promise<{ token?: string }> };
+type Props = { searchParams: Promise<{ token?: string; denied?: string }> };
+
+const ACCESS_COOKIE = "at_access";
+const cookieOpts = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: process.env.NODE_ENV === "production",
+  maxAge: 60 * 60 * 24 * 365,
+} as const;
+
+/** Granted by the simple password cookie OR the existing ADMIN_TOKEN paths. */
+async function hasAutoTraderAccess(token?: string): Promise<boolean> {
+  if (await hasPaperAccess(token)) return true;
+  const store = await cookies();
+  return store.get(ACCESS_COOKIE)?.value === AUTO_TRADER_PASSWORD;
+}
+
+async function unlock(formData: FormData) {
+  "use server";
+  const pw = String(formData.get("password") ?? "").trim();
+  if (pw !== AUTO_TRADER_PASSWORD) redirect("/admin/auto-trader?denied=1");
+  const store = await cookies();
+  store.set(ACCESS_COOKIE, pw, cookieOpts);
+  redirect("/admin/auto-trader");
+}
+
+async function lock() {
+  "use server";
+  const store = await cookies();
+  store.delete(ACCESS_COOKIE);
+  revalidatePath("/admin/auto-trader");
+}
+
+function LockScreen({ denied }: { denied?: string }) {
+  return (
+    <div className="mx-auto max-w-xs space-y-4 py-16">
+      <div className="text-center">
+        <h1 className="text-xl font-bold tracking-tight">Auto-trader</h1>
+        <p className="mt-1 text-sm text-muted">Enter the password to view the bot.</p>
+      </div>
+      <form action={unlock} className="space-y-2">
+        <input
+          type="password"
+          name="password"
+          autoFocus
+          placeholder="Password"
+          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent"
+        />
+        <button
+          type="submit"
+          className="w-full rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-background"
+        >
+          Unlock
+        </button>
+        {denied && (
+          <p className="text-center text-xs text-negative">
+            Wrong password — try again.
+          </p>
+        )}
+      </form>
+    </div>
+  );
+}
 
 const usd = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -33,13 +103,9 @@ const pnlClass = (n: number) =>
   n > 0 ? "text-positive" : n < 0 ? "text-negative" : "";
 
 export default async function AutoTraderPage({ searchParams }: Props) {
-  const { token } = await searchParams;
-  if (!isAdmin(token)) {
-    return (
-      <p className="py-20 text-center text-sm text-muted">
-        Add ?token=ADMIN_TOKEN to the URL.
-      </p>
-    );
+  const { token, denied } = await searchParams;
+  if (!(await hasAutoTraderAccess(token))) {
+    return <LockScreen denied={denied} />;
   }
 
   const botProfileId = await ensureBotProfileId();
@@ -95,9 +161,16 @@ export default async function AutoTraderPage({ searchParams }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline justify-between">
+      <div className="flex items-baseline justify-between gap-3">
         <h1 className="text-xl font-bold tracking-tight">Auto-trader</h1>
-        <span className="text-sm text-muted">paper · admin-only · owner book separate</span>
+        <div className="flex shrink-0 items-baseline gap-3 text-sm text-muted">
+          <span className="hidden sm:inline">paper · owner book separate</span>
+          <form action={lock}>
+            <button type="submit" className="hover:text-foreground">
+              Lock
+            </button>
+          </form>
+        </div>
       </div>
 
       {/* Performance */}

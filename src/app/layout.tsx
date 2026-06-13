@@ -56,6 +56,12 @@ export default function RootLayout({
             <Link href="/paper" className="text-muted hover:text-foreground">
               Paper
             </Link>
+            <Link
+              href="/admin/auto-trader"
+              className="text-muted hover:text-foreground"
+            >
+              Auto-trader
+            </Link>
           </nav>
         </header>
         <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6">
