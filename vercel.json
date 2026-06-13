@@ -3,6 +3,7 @@
   "crons": [
     { "path": "/api/jobs/sync-catalog", "schedule": "10 6 * * *" },
     { "path": "/api/jobs/snapshot", "schedule": "30 6 * * *" },
+    { "path": "/api/jobs/auto-trade", "schedule": "35 6 * * *" },
     { "path": "/api/jobs/match", "schedule": "50 6 * * *" },
     { "path": "/api/jobs/settle-paper", "schedule": "40 6 * * *" },
     { "path": "/api/jobs/digest", "schedule": "0 13 * * 1" }

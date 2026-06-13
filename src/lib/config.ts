@@ -26,6 +26,31 @@ export const SNAPSHOT_TOP_N = Number(process.env.SNAPSHOT_TOP_N ?? 200);
 /** Minimum executable dollars on both legs before an arb is shown as real. */
 export const MIN_EXECUTABLE_USD = Number(process.env.MIN_EXECUTABLE_USD ?? 50);
 
+/**
+ * Auto-trader (paper, admin-only). Off by default so arming is explicit. The
+ * bot opens arbs whose after-fee edge clears MIN_EDGE and whose book isn't thin,
+ * and closes early only on the explicit triggers below — otherwise it holds to
+ * settlement (optimal for a clean arb: legs sum to $1 with no exit fees).
+ */
+export const AUTO_TRADER_ENABLED = process.env.AUTO_TRADER_ENABLED === "1";
+/** Minimum after-fee net edge per share before the bot opens (stricter than display). */
+export const AUTO_TRADER_MIN_EDGE = Number(process.env.AUTO_TRADER_MIN_EDGE ?? 0.02);
+/** Target cost basis (USD, incl. fees) per opened position, before caps. */
+export const AUTO_TRADER_STAKE_USD = Number(process.env.AUTO_TRADER_STAKE_USD ?? 100);
+/** Hard cap on simultaneously open bot positions. */
+export const AUTO_TRADER_MAX_OPEN = Number(process.env.AUTO_TRADER_MAX_OPEN ?? 20);
+/** Max open bot positions per market link (1 = no piling into one pair). */
+export const AUTO_TRADER_MAX_PER_PAIR = Number(process.env.AUTO_TRADER_MAX_PER_PAIR ?? 1);
+/** Close early once an open position's unrealized P&L reaches +this many USD. */
+export const AUTO_TRADER_TAKE_PROFIT_USD = Number(
+  process.env.AUTO_TRADER_TAKE_PROFIT_USD ?? 5,
+);
+/** Close early once an open position's unrealized P&L falls to −this many USD. */
+export const AUTO_TRADER_STOP_USD = Number(process.env.AUTO_TRADER_STOP_USD ?? 10);
+/** Bank a positive mark on rules-differ pairs (real basis risk); default on. */
+export const AUTO_TRADER_CLOSE_RULES_DIFFER =
+  process.env.AUTO_TRADER_CLOSE_RULES_DIFFER !== "0";
+
 /** Heuristic score below which candidate pairs are not sent to the LLM. */
 export const MATCH_LLM_THRESHOLD = 0.5;
 /** Thresholds for auto-confirming a match without human review. */
