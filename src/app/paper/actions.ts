@@ -24,8 +24,9 @@ import {
 } from "@/lib/db/schema";
 import { describeFill } from "@/lib/explain/copy";
 import {
+  arbLegsFromResult,
+  closeTradeAtMarket,
   getPaperTradeViews,
-  legBid,
   paperStats,
   settleOpenTrade,
   tradeCostUsd,
@@ -233,19 +234,13 @@ export async function openPaperTrade(
   if (mode === "arb") {
     const arb = spread.arb;
     if (!arb) return { status: "error", message: "No arb is currently available on this pair — prices moved." };
-    if (arb.direction === "yes_kalshi") {
-      kalshiSide = "yes";
-      kalshiEntry = arb.yesAsk;
-      polySide = flip("no");
-      polyEntry = arb.noAsk;
-    } else {
-      polySide = flip("yes");
-      polyEntry = arb.yesAsk;
-      kalshiSide = "no";
-      kalshiEntry = arb.noAsk;
-    }
-    expectedEdge = arb.netEdge;
-    thinBook = arb.thinBook;
+    const legs = arbLegsFromResult(arb, link.outcomeInverted);
+    kalshiSide = legs.kalshiSide;
+    kalshiEntry = legs.kalshiEntry;
+    polySide = legs.polySide;
+    polyEntry = legs.polyEntry;
+    expectedEdge = legs.expectedEdge;
+    thinBook = legs.thinBook;
   } else if (mode === "yes_kalshi" || mode === "no_kalshi") {
     kalshiSide = mode === "yes_kalshi" ? "yes" : "no";
     kalshiEntry = kalshiSide === "yes" ? (ks?.yesAsk ?? null) : (ks?.noAsk ?? null);
@@ -380,38 +375,11 @@ export async function closePaperTrade(formData: FormData) {
   const event = km?.eventId
     ? (await db().select().from(events).where(eq(events.id, km.eventId)).limit(1))[0]
     : null;
-  const feeCat = feeCategoryFor(event?.category);
 
-  const snaps = await latestSnapshots([link.kalshiMarketId, link.polymarketMarketId]);
-  const ks = snaps.get(link.kalshiMarketId) ?? null;
-  const ps = snaps.get(link.polymarketMarketId) ?? null;
-
-  const exitKalshi = trade.kalshiSide ? legBid(trade.kalshiSide, ks) : null;
-  const exitPoly = trade.polySide ? legBid(trade.polySide, ps) : null;
-  if ((trade.kalshiSide && exitKalshi === null) || (trade.polySide && exitPoly === null)) {
+  const result = await closeTradeAtMarket(trade, link, feeCategoryFor(event?.category));
+  if (!result.ok && result.reason === "stale") {
     throw new Error("No current bid to close against — run the snapshot job first");
   }
-
-  const exitFeesUsd =
-    (exitKalshi !== null ? kalshiTakerFeePerShare(exitKalshi, feeCat) * trade.shares : 0) +
-    (exitPoly !== null
-      ? polymarketTakerFeePerShare(exitPoly, feeCat, { isSell: true }) * trade.shares
-      : 0);
-  const proceeds =
-    ((exitKalshi ?? 0) + (exitPoly ?? 0)) * trade.shares - exitFeesUsd;
-
-  await db()
-    .update(paperTrades)
-    .set({
-      status: "closed",
-      closedAt: new Date(),
-      exitKalshi,
-      exitPoly,
-      exitFeesUsd,
-      realizedPnlUsd: proceeds - tradeCostUsd(trade),
-      closeReason: "manual",
-    })
-    .where(and(eq(paperTrades.id, trade.id), eq(paperTrades.status, "open")));
   revalidatePath("/paper");
 }
 

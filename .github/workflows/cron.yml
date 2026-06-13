@@ -11,6 +11,7 @@ name: cron-pinger
 on:
   schedule:
     - cron: "*/10 * * * *" # snapshot (GH Actions jitter: ±few minutes is fine)
+    - cron: "5,35 * * * *" # auto-trade twice hourly (on fresh snapshots)
     - cron: "15 * * * *"   # sync-catalog hourly
     - cron: "25 * * * *"   # settle-paper hourly (after sync-catalog)
     - cron: "45 */6 * * *" # match every 6h
@@ -18,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "Job to trigger (sync-catalog | snapshot | match | digest | settle-paper)"
+        description: "Job to trigger (sync-catalog | snapshot | auto-trade | match | digest | settle-paper)"
         required: true
         default: "snapshot"
 
@@ -36,6 +37,7 @@ jobs:
           else
             case "${{ github.event.schedule }}" in
               "*/10 * * * *") echo "job=snapshot" >> "$GITHUB_OUTPUT" ;;
+              "5,35 * * * *") echo "job=auto-trade" >> "$GITHUB_OUTPUT" ;;
               "15 * * * *")   echo "job=sync-catalog" >> "$GITHUB_OUTPUT" ;;
               "25 * * * *")   echo "job=settle-paper" >> "$GITHUB_OUTPUT" ;;
               "45 */6 * * *") echo "job=match" >> "$GITHUB_OUTPUT" ;;

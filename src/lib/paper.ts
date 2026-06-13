@@ -1,5 +1,7 @@
+import { createHash } from "crypto";
 import { cookies } from "next/headers";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import type { ArbResult } from "./arb/spread";
 import {
   feeCategoryFor,
   kalshiTakerFeePerShare,
@@ -13,6 +15,7 @@ import {
   marketLinks,
   markets,
   paperTrades,
+  profiles,
   type Event,
   type Market,
   type MarketLink,
@@ -44,10 +47,104 @@ export async function hasPaperAccess(token?: string | null): Promise<boolean> {
   return isAdmin(store.get(PAPER_COOKIE_NAME)?.value);
 }
 
+/**
+ * The auto-trader's book is a reserved profile, not the owner's NULL book, so
+ * the bot's cash/equity/capture-ratio never commingle with manual owner trades
+ * (paperStats is computed per profileId). The reserved email can't collide with
+ * a tester sign-up — testers use real emails behind the invite code.
+ */
+export const BOT_PROFILE_EMAIL = "auto-trader@bot.spread-scout.internal";
+export const BOT_PROFILE_DISPLAY_NAME = "Auto-trader (bot)";
+
+/** Idempotently ensure the bot's reserved profile row exists; returns its id. */
+export async function ensureBotProfileId(): Promise<string> {
+  const [p] = await db()
+    .insert(profiles)
+    .values({ email: BOT_PROFILE_EMAIL, displayName: BOT_PROFILE_DISPLAY_NAME })
+    // No-op update so RETURNING yields the existing row on every run after the
+    // first; the unique email makes this safe under concurrent job runs.
+    .onConflictDoUpdate({ target: profiles.email, set: { email: BOT_PROFILE_EMAIL } })
+    .returning();
+  return p.id;
+}
+
 /** Cost basis of one trade in USD, entry fees included. */
 export function tradeCostUsd(t: PaperTrade): number {
   const perShare = (t.kalshiEntry ?? 0) + (t.polyEntry ?? 0);
   return perShare * t.shares + t.entryFeesUsd;
+}
+
+export type ArbLegs = {
+  kalshiSide: PaperSide;
+  kalshiEntry: number;
+  polySide: PaperSide;
+  polyEntry: number;
+  expectedEdge: number;
+  thinBook: boolean;
+};
+
+/**
+ * Map a positive ArbResult onto venue-term legs, applying outcomeInverted, so
+ * the manual open action and the auto-trader build identical positions.
+ * Sides are stored in each venue's own terms; `flip` maps the canonical
+ * (Kalshi-question) side onto the real Polymarket book when inverted.
+ */
+export function arbLegsFromResult(arb: ArbResult, outcomeInverted: boolean): ArbLegs {
+  const flip = (s: PaperSide): PaperSide =>
+    outcomeInverted ? (s === "yes" ? "no" : "yes") : s;
+  if (arb.direction === "yes_kalshi") {
+    return {
+      kalshiSide: "yes",
+      kalshiEntry: arb.yesAsk,
+      polySide: flip("no"),
+      polyEntry: arb.noAsk,
+      expectedEdge: arb.netEdge,
+      thinBook: arb.thinBook,
+    };
+  }
+  return {
+    kalshiSide: "no",
+    kalshiEntry: arb.noAsk,
+    polySide: flip("yes"),
+    polyEntry: arb.yesAsk,
+    expectedEdge: arb.netEdge,
+    thinBook: arb.thinBook,
+  };
+}
+
+/** Entry fees + total cost basis for a fully two-legged arb position. */
+export function arbEntryCost(
+  legs: Pick<ArbLegs, "kalshiEntry" | "polyEntry">,
+  shares: number,
+  feeCat: FeeCategory,
+): { entryFeesUsd: number; costUsd: number } {
+  const entryFeesUsd =
+    kalshiTakerFeePerShare(legs.kalshiEntry, feeCat) * shares +
+    polymarketTakerFeePerShare(legs.polyEntry, feeCat) * shares;
+  return {
+    entryFeesUsd,
+    costUsd: (legs.kalshiEntry + legs.polyEntry) * shares + entryFeesUsd,
+  };
+}
+
+/**
+ * Deterministic (v5-shaped) UUID so two overlapping auto-trade runs in the same
+ * time bucket generate the SAME idempotency_key for a link — the unique index
+ * then makes the second insert a no-op. No `uuid` package is installed; the
+ * sha1 of a namespaced string, reshaped to the RFC-4122 v5 layout, is enough
+ * (we only need determinism + uniqueness, not cryptographic v5 semantics).
+ */
+export function botIdempotencyKey(linkId: string, bucketStartMs: number): string {
+  const h = createHash("sha1")
+    .update(`auto-trade:${linkId}:${bucketStartMs}`)
+    .digest("hex");
+  const variant = ((parseInt(h.slice(16, 18), 16) & 0x3f) | 0x80)
+    .toString(16)
+    .padStart(2, "0");
+  return (
+    `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-` +
+    `${variant}${h.slice(18, 20)}-${h.slice(20, 32)}`
+  );
 }
 
 /** What a leg could be sold for right now: its own venue's bid for that side. */
@@ -170,6 +267,56 @@ export async function settleOpenTrade(
     .where(and(eq(paperTrades.id, trade.id), eq(paperTrades.status, "open")))
     .returning({ id: paperTrades.id });
   return updated.length > 0;
+}
+
+export type CloseAtMarketResult =
+  | { ok: true }
+  | { ok: false; reason: "stale" | "already_closed" };
+
+/**
+ * Close one open trade at the current market: each leg is sold at its own
+ * venue's bid, minus taker exit fees (Polymarket sells are fee-exempt). Shared
+ * by the manual "close at market" button and the auto-trader's close pass; the
+ * `status = 'open'` guard makes both paths race-safe with each other and with
+ * settlement. Returns `stale` when an open leg has no bid to close against —
+ * the caller decides whether that's an error (manual) or a skip (bot).
+ */
+export async function closeTradeAtMarket(
+  trade: PaperTrade,
+  link: MarketLink,
+  feeCat: FeeCategory,
+): Promise<CloseAtMarketResult> {
+  const snaps = await latestSnapshots([link.kalshiMarketId, link.polymarketMarketId]);
+  const ks = snaps.get(link.kalshiMarketId) ?? null;
+  const ps = snaps.get(link.polymarketMarketId) ?? null;
+
+  const exitKalshi = trade.kalshiSide ? legBid(trade.kalshiSide, ks) : null;
+  const exitPoly = trade.polySide ? legBid(trade.polySide, ps) : null;
+  if ((trade.kalshiSide && exitKalshi === null) || (trade.polySide && exitPoly === null)) {
+    return { ok: false, reason: "stale" };
+  }
+
+  const exitFeesUsd =
+    (exitKalshi !== null ? kalshiTakerFeePerShare(exitKalshi, feeCat) * trade.shares : 0) +
+    (exitPoly !== null
+      ? polymarketTakerFeePerShare(exitPoly, feeCat, { isSell: true }) * trade.shares
+      : 0);
+  const proceeds = ((exitKalshi ?? 0) + (exitPoly ?? 0)) * trade.shares - exitFeesUsd;
+
+  const updated = await db()
+    .update(paperTrades)
+    .set({
+      status: "closed",
+      closedAt: new Date(),
+      exitKalshi,
+      exitPoly,
+      exitFeesUsd,
+      realizedPnlUsd: proceeds - tradeCostUsd(trade),
+      closeReason: "manual",
+    })
+    .where(and(eq(paperTrades.id, trade.id), eq(paperTrades.status, "open")))
+    .returning({ id: paperTrades.id });
+  return updated.length > 0 ? { ok: true } : { ok: false, reason: "already_closed" };
 }
 
 export type PaperTradeView = {
