@@ -2,22 +2,19 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ClosePreviewButton } from "@/components/ClosePreviewButton";
 import { ProfileSignupForm } from "@/components/ProfileSignupForm";
+import { SettleConfirmButton } from "@/components/SettleConfirmButton";
 import { SpreadChart } from "@/components/SpreadChart";
 import { Explainer } from "@/components/ui";
 import { cents } from "@/lib/explain/copy";
 import {
   getPaperTradeViews,
   paperStats,
+  settlementValuePerShare,
   type PaperTradeView,
 } from "@/lib/paper";
 import { getPaperIdentity, identityProfileId } from "@/lib/profile";
 import { getSpreadHistoryRange, type SpreadPoint } from "@/lib/queries";
-import {
-  deletePaperTrade,
-  paperLogin,
-  paperLogout,
-  settlePaperTrade,
-} from "./actions";
+import { deletePaperTrade, paperLogin, paperLogout } from "./actions";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Paper trading", robots: "noindex" };
@@ -245,6 +242,15 @@ function TradeCard({
   const isArb = trade.expectedEdge !== null;
   const pnl = isOpen ? mark.unrealizedPnlUsd : trade.realizedPnlUsd;
 
+  // Settlement payout preview per outcome (no link = no inversion info, so
+  // the confirm step falls back to text without numbers).
+  const settlePreview = (kalshiYesWon: boolean) => {
+    if (!view.link) return { payoutUsd: null, pnlUsd: null };
+    const v = settlementValuePerShare(trade, kalshiYesWon, view.link.outcomeInverted);
+    const payoutUsd = ((v.kalshi ?? 0) + (v.poly ?? 0)) * trade.shares;
+    return { payoutUsd, pnlUsd: payoutUsd - view.costUsd };
+  };
+
   return (
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="flex items-start justify-between gap-3">
@@ -293,18 +299,8 @@ function TradeCard({
             pnlUsd={mark.unrealizedPnlUsd}
             exitFeesUsd={mark.exitFeesUsd}
           />
-          <TradeAction
-            action={settlePaperTrade}
-            tradeId={trade.id}
-            label="Settled YES"
-            extra={{ outcome: "yes" }}
-          />
-          <TradeAction
-            action={settlePaperTrade}
-            tradeId={trade.id}
-            label="Settled NO"
-            extra={{ outcome: "no" }}
-          />
+          <SettleConfirmButton tradeId={trade.id} outcome="yes" {...settlePreview(true)} />
+          <SettleConfirmButton tradeId={trade.id} outcome="no" {...settlePreview(false)} />
           <TradeAction
             action={deletePaperTrade}
             tradeId={trade.id}
@@ -321,21 +317,16 @@ function TradeAction({
   action,
   tradeId,
   label,
-  extra,
   subtle,
 }: {
   action: (formData: FormData) => Promise<void>;
   tradeId: string;
   label: string;
-  extra?: Record<string, string>;
   subtle?: boolean;
 }) {
   return (
     <form action={action}>
       <input type="hidden" name="tradeId" value={tradeId} />
-      {Object.entries(extra ?? {}).map(([k, v]) => (
-        <input key={k} type="hidden" name={k} value={v} />
-      ))}
       <button
         className={
           subtle
