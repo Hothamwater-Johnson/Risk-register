@@ -4,6 +4,7 @@ import { feeCategoryFor } from "./arb/fees";
 import {
   AUTO_TRADER_CLOSE_RULES_DIFFER,
   AUTO_TRADER_ENABLED,
+  AUTO_TRADER_MAX_DAYS_TO_RESOLVE,
   AUTO_TRADER_MAX_OPEN,
   AUTO_TRADER_MIN_EDGE,
   AUTO_TRADER_PASSWORD,
@@ -166,10 +167,26 @@ export async function autoTradeOnce(): Promise<Record<string, unknown>> {
     skippedTooSmall: 0,
     skippedNoCash: 0,
     skippedDuplicate: 0,
+    skippedTooFar: 0,
     hitMaxOpen: 0,
   };
 
+  // Skip pairs that resolve too far out: a long-dated arb freezes capital until
+  // settlement and never informs the capture ratio in time. Unknown close date
+  // (null) is treated as too-far — likely a perpetual/undated market.
+  const horizonMs =
+    AUTO_TRADER_MAX_DAYS_TO_RESOLVE > 0
+      ? AUTO_TRADER_MAX_DAYS_TO_RESOLVE * 86_400_000
+      : null;
+
   for (const pair of pairs) {
+    if (horizonMs !== null) {
+      const closeAt = pair.kalshiEvent.closeTime ?? pair.polymarketEvent.closeTime;
+      if (!closeAt || closeAt.getTime() - Date.now() > horizonMs) {
+        opens.skippedTooFar += pair.links.length;
+        continue;
+      }
+    }
     for (const lv of pair.links) {
       if (currentOpen >= AUTO_TRADER_MAX_OPEN) {
         opens.hitMaxOpen++;

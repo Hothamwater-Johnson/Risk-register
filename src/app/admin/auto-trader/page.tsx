@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { desc, eq } from "drizzle-orm";
 import {
   AUTO_TRADER_CLOSE_RULES_DIFFER,
+  AUTO_TRADER_MAX_DAYS_TO_RESOLVE,
   AUTO_TRADER_MAX_OPEN,
   AUTO_TRADER_MIN_EDGE,
   AUTO_TRADER_PASSWORD,
@@ -161,6 +162,7 @@ const SKIP_LABELS: Record<string, string> = {
   skippedTooSmall: "too small to size",
   skippedNoCash: "not enough cash",
   skippedDuplicate: "duplicate (race)",
+  skippedTooFar: "resolves too far out",
   hitMaxOpen: "max-open reached",
 };
 const CLOSE_LABELS: Record<string, string> = {
@@ -283,6 +285,12 @@ export default async function AutoTraderPage({ searchParams }: Props) {
     ["Min net edge", `${(AUTO_TRADER_MIN_EDGE * 100).toFixed(2)}¢/share`],
     ["Stake / position", usd(AUTO_TRADER_STAKE_USD)],
     ["Max open", String(AUTO_TRADER_MAX_OPEN)],
+    [
+      "Max time to resolve",
+      AUTO_TRADER_MAX_DAYS_TO_RESOLVE > 0
+        ? `${AUTO_TRADER_MAX_DAYS_TO_RESOLVE} days`
+        : "off",
+    ],
     ["Re-entry", "once per session"],
     [
       "Take profit",
