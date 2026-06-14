@@ -15,6 +15,7 @@ import {
 import {
   AT_ACCESS_COOKIE,
   atCookieOpts,
+  autoTradeOnce,
   clearSession,
   getAutoTraderState,
   hasAutoTraderAccess,
@@ -22,6 +23,7 @@ import {
   pauseAutoTrader,
   startAutoTrader,
 } from "@/lib/autoTrader";
+import { recordJobRun } from "@/lib/jobs";
 import { db } from "@/lib/db/client";
 import { syncRuns, type TradingSession } from "@/lib/db/schema";
 import {
@@ -41,6 +43,7 @@ type Props = {
     confirm?: string;
     cleared?: string;
     migrate?: string;
+    ran?: string;
   }>;
 };
 
@@ -82,6 +85,14 @@ async function clearAction() {
   const res = await clearSession();
   revalidatePath("/admin/auto-trader");
   redirect(res.ok ? "/admin/auto-trader?cleared=1" : "/admin/auto-trader?migrate=1");
+}
+
+async function runNow() {
+  "use server";
+  if (!(await hasAutoTraderAccess())) throw new Error("Unauthorized");
+  // Same pass the cron runs, logged to sync_runs (so "Last run" updates).
+  await recordJobRun("auto-trade", autoTradeOnce);
+  redirect("/admin/auto-trader?ran=1");
 }
 
 function LockScreen({ denied }: { denied?: string }) {
@@ -141,8 +152,84 @@ const pnlClass = (n: number) =>
 const pct = (n: number | null | undefined) =>
   n === null || n === undefined ? "—" : `${(n * 100).toFixed(0)}%`;
 
+// Plain-English labels for the auto-trade run stats (raw JSON stays on /admin/health).
+const SKIP_LABELS: Record<string, string> = {
+  skippedBelowEdge: "below min edge",
+  skippedNoArb: "no arb",
+  skippedThin: "thin book",
+  skippedHasPosition: "already traded this session",
+  skippedTooSmall: "too small to size",
+  skippedNoCash: "not enough cash",
+  skippedDuplicate: "duplicate (race)",
+  hitMaxOpen: "max-open reached",
+};
+const CLOSE_LABELS: Record<string, string> = {
+  take_profit: "take-profit",
+  stop_loss: "stop-loss",
+  rules_differ: "rules differ",
+  stale: "no quote",
+  already_closed: "already closed",
+};
+
+function StatRow({ label, value, cls }: { label: string; value: string; cls?: string }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <span className="text-muted">{label}</span>
+      <span className={`font-mono ${cls ?? ""}`}>{value}</span>
+    </div>
+  );
+}
+
+/** Turn the auto-trade run stats blob into a labeled, zeros-hidden breakdown. */
+function LastRunSummary({ stats }: { stats: unknown }) {
+  const s = (stats ?? {}) as Record<string, unknown>;
+  if (typeof s.skipped === "string") {
+    return <p className="text-muted">No trades — {s.skipped}.</p>;
+  }
+  const num = (k: string): number => (typeof s[k] === "number" ? (s[k] as number) : 0);
+  const closes = (s.closes ?? {}) as Record<string, number>;
+
+  const opened = num("opened");
+  const closedCount =
+    (closes.take_profit ?? 0) + (closes.stop_loss ?? 0) + (closes.rules_differ ?? 0);
+  const closeReasons = Object.entries(CLOSE_LABELS)
+    .map(([k, label]) => [label, closes[k] ?? 0] as const)
+    .filter(([, n]) => n > 0);
+  const skipReasons = Object.entries(SKIP_LABELS)
+    .map(([k, label]) => [label, num(k)] as const)
+    .filter(([, n]) => n > 0);
+  const skippedTotal = skipReasons.reduce((a, [, n]) => a + n, 0);
+
+  return (
+    <div className="space-y-1">
+      <StatRow label="Opened" value={String(opened)} cls={opened > 0 ? "text-positive" : ""} />
+      <StatRow
+        label="Closed"
+        value={
+          closeReasons.length
+            ? `${closedCount} (${closeReasons.map(([l, n]) => `${n} ${l}`).join(", ")})`
+            : String(closedCount)
+        }
+      />
+      <StatRow label="Skipped" value={String(skippedTotal)} />
+      {skipReasons.length > 0 && (
+        <div className="flex flex-wrap gap-1 pt-0.5">
+          {skipReasons.map(([label, n]) => (
+            <span key={label} className="rounded-full border border-border px-2 py-0.5 text-muted">
+              {n} {label}
+            </span>
+          ))}
+        </div>
+      )}
+      {typeof s.cashUsdAfter === "number" && (
+        <StatRow label="Cash left" value={usd(s.cashUsdAfter)} />
+      )}
+    </div>
+  );
+}
+
 export default async function AutoTraderPage({ searchParams }: Props) {
-  const { token, denied, confirm, cleared, migrate } = await searchParams;
+  const { token, denied, confirm, cleared, migrate, ran } = await searchParams;
   if (!(await hasAutoTraderAccess(token))) {
     return <LockScreen denied={denied} />;
   }
@@ -253,6 +340,15 @@ export default async function AutoTraderPage({ searchParams }: Props) {
                 </button>
               </form>
             ))}
+          <form action={runNow}>
+            <button
+              type="submit"
+              className="rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-background"
+              title="Trigger one auto-trade pass now (same as the cron)"
+            >
+              Run now
+            </button>
+          </form>
           <a
             href="/admin/auto-trader/report"
             className="rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-background"
@@ -282,6 +378,12 @@ export default async function AutoTraderPage({ searchParams }: Props) {
           <code>drizzle/0003_trading_sessions.sql</code> on the database to enable
           start/stop and session logging. Until then the bot follows the{" "}
           <code>AUTO_TRADER_ENABLED</code> env flag.
+        </p>
+      )}
+      {ran && (
+        <p className="rounded-xl border border-border bg-card px-4 py-3 text-xs text-muted">
+          Ran one auto-trade pass — see <strong className="text-foreground">Last run</strong> below
+          for the result. (If the session is paused, the pass is a no-op.)
         </p>
       )}
       {cleared && (
@@ -374,9 +476,9 @@ export default async function AutoTraderPage({ searchParams }: Props) {
               </div>
               {lastRun.error && <p className="text-negative">{lastRun.error}</p>}
               {lastRun.stats != null && (
-                <p className="break-all font-mono text-muted">
-                  {JSON.stringify(lastRun.stats)}
-                </p>
+                <div className="mt-1 border-t border-border pt-2">
+                  <LastRunSummary stats={lastRun.stats} />
+                </div>
               )}
             </div>
           ) : (
