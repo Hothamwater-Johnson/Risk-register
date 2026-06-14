@@ -6,7 +6,6 @@ import { desc, eq } from "drizzle-orm";
 import {
   AUTO_TRADER_CLOSE_RULES_DIFFER,
   AUTO_TRADER_MAX_OPEN,
-  AUTO_TRADER_MAX_PER_PAIR,
   AUTO_TRADER_MIN_EDGE,
   AUTO_TRADER_PASSWORD,
   AUTO_TRADER_STAKE_USD,
@@ -121,8 +120,18 @@ function LockScreen({ denied }: { denied?: string }) {
 const usd = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
+// Render timestamps in US Eastern (ET) — server runs in UTC, so a raw ISO
+// string reads as "the future" for an ET viewer.
 const when = (d: Date | null) =>
-  d ? new Date(d).toISOString().slice(0, 16).replace("T", " ") : "—";
+  d
+    ? new Date(d).toLocaleString("en-US", {
+        timeZone: "America/New_York",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }) + " ET"
+    : "—";
 
 const signed = (n: number) => `${n >= 0 ? "+" : ""}${usd(n)}`;
 
@@ -187,9 +196,19 @@ export default async function AutoTraderPage({ searchParams }: Props) {
     ["Min net edge", `${(AUTO_TRADER_MIN_EDGE * 100).toFixed(2)}¢/share`],
     ["Stake / position", usd(AUTO_TRADER_STAKE_USD)],
     ["Max open", String(AUTO_TRADER_MAX_OPEN)],
-    ["Max per pair", String(AUTO_TRADER_MAX_PER_PAIR)],
-    ["Take profit", usd(AUTO_TRADER_TAKE_PROFIT_USD)],
-    ["Stop loss", `−${usd(AUTO_TRADER_STOP_USD)}`],
+    ["Re-entry", "once per session"],
+    [
+      "Take profit",
+      AUTO_TRADER_TAKE_PROFIT_USD > 0
+        ? usd(AUTO_TRADER_TAKE_PROFIT_USD)
+        : "off (hold to settlement)",
+    ],
+    [
+      "Stop loss",
+      AUTO_TRADER_STOP_USD > 0
+        ? `−${usd(AUTO_TRADER_STOP_USD)}`
+        : "off (hold to settlement)",
+    ],
     ["Close on rules-differ", AUTO_TRADER_CLOSE_RULES_DIFFER ? "yes" : "no"],
   ];
 

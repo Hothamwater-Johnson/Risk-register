@@ -19,6 +19,7 @@ import {
   type Event,
   type Market,
   type MarketLink,
+  type PaperCloseReason,
   type PaperSide,
   type PaperTrade,
   type PriceSnapshot,
@@ -285,6 +286,7 @@ export async function closeTradeAtMarket(
   trade: PaperTrade,
   link: MarketLink,
   feeCat: FeeCategory,
+  closeReason: PaperCloseReason = "manual",
 ): Promise<CloseAtMarketResult> {
   const snaps = await latestSnapshots([link.kalshiMarketId, link.polymarketMarketId]);
   const ks = snaps.get(link.kalshiMarketId) ?? null;
@@ -312,7 +314,7 @@ export async function closeTradeAtMarket(
       exitPoly,
       exitFeesUsd,
       realizedPnlUsd: proceeds - tradeCostUsd(trade),
-      closeReason: "manual",
+      closeReason,
     })
     .where(and(eq(paperTrades.id, trade.id), eq(paperTrades.status, "open")))
     .returning({ id: paperTrades.id });
