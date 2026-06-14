@@ -3,6 +3,7 @@ import {
   boolean,
   doublePrecision,
   index,
+  integer,
   jsonb,
   pgTable,
   smallint,
@@ -239,6 +240,32 @@ export const emailSubscribers = pgTable("email_subscribers", {
   source: text("source"),
 });
 
+export type SessionStatus = "running" | "paused" | "ended";
+
+/**
+ * Auto-trader sessions. The single row with endedAt = null is the active
+ * session; its status ('running' | 'paused') is the start/stop toggle the
+ * auto-trade job reads. "Clear session" finalizes the active row (status
+ * 'ended' + summary stats + a per-trade CSV snapshot), wipes the bot's
+ * paper_trades back to a fresh bankroll, and opens a new paused session.
+ * App logic keeps at most one active session (no DB-level partial unique).
+ */
+export const tradingSessions = pgTable(
+  "trading_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true }), // null = active
+    status: text("status").notNull().$type<SessionStatus>().default("paused"),
+    label: text("label"),
+    tradeCount: integer("trade_count"),
+    stats: jsonb("stats"), // PaperStats snapshot + counts at clear time
+    csv: text("csv"), // per-trade CSV snapshot at clear time
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [index("trading_sessions_ended_started_idx").on(t.endedAt, t.startedAt.desc())],
+);
+
 export const syncRuns = pgTable(
   "sync_runs",
   {
@@ -260,3 +287,4 @@ export type PriceSnapshot = typeof priceSnapshots.$inferSelect;
 export type EventMatch = typeof eventMatches.$inferSelect;
 export type MarketLink = typeof marketLinks.$inferSelect;
 export type PaperTrade = typeof paperTrades.$inferSelect;
+export type TradingSession = typeof tradingSessions.$inferSelect;
