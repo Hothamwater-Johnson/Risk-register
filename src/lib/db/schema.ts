@@ -179,7 +179,13 @@ export const profiles = pgTable("profiles", {
 });
 
 export type PaperSide = "yes" | "no";
-export type PaperCloseReason = "manual" | "settled_yes" | "settled_no";
+export type PaperCloseReason =
+  | "manual"
+  | "settled_yes"
+  | "settled_no"
+  | "take_profit"
+  | "stop_loss"
+  | "rules_differ";
 
 /**
  * Paper-trading simulator: virtual fills recorded against our own snapshots

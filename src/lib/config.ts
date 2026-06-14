@@ -39,14 +39,18 @@ export const AUTO_TRADER_MIN_EDGE = Number(process.env.AUTO_TRADER_MIN_EDGE ?? 0
 export const AUTO_TRADER_STAKE_USD = Number(process.env.AUTO_TRADER_STAKE_USD ?? 100);
 /** Hard cap on simultaneously open bot positions. */
 export const AUTO_TRADER_MAX_OPEN = Number(process.env.AUTO_TRADER_MAX_OPEN ?? 20);
-/** Max open bot positions per market link (1 = no piling into one pair). */
-export const AUTO_TRADER_MAX_PER_PAIR = Number(process.env.AUTO_TRADER_MAX_PER_PAIR ?? 1);
-/** Close early once an open position's unrealized P&L reaches +this many USD. */
+/**
+ * Early-close thresholds on an open position's unrealized (mark-to-market) P&L.
+ * BOTH default to 0 = disabled, because marking a two-leg *hedged* arb against
+ * the bid side mid-life just reflects the book's bid/ask spread — a real arb
+ * pays $1/share at settlement, so closing early only realizes that spread (plus
+ * a second round of taker fees) as a loss. Default behavior is therefore: hold
+ * to settlement (settle-paper closes them). Set > 0 only to opt back in.
+ */
 export const AUTO_TRADER_TAKE_PROFIT_USD = Number(
-  process.env.AUTO_TRADER_TAKE_PROFIT_USD ?? 5,
+  process.env.AUTO_TRADER_TAKE_PROFIT_USD ?? 0,
 );
-/** Close early once an open position's unrealized P&L falls to −this many USD. */
-export const AUTO_TRADER_STOP_USD = Number(process.env.AUTO_TRADER_STOP_USD ?? 10);
+export const AUTO_TRADER_STOP_USD = Number(process.env.AUTO_TRADER_STOP_USD ?? 0);
 /** Bank a positive mark on rules-differ pairs (real basis risk); default on. */
 export const AUTO_TRADER_CLOSE_RULES_DIFFER =
   process.env.AUTO_TRADER_CLOSE_RULES_DIFFER !== "0";

@@ -3,7 +3,6 @@ import { isAutoTraderRunning } from "@/lib/autoTrader";
 import {
   AUTO_TRADER_CLOSE_RULES_DIFFER,
   AUTO_TRADER_MAX_OPEN,
-  AUTO_TRADER_MAX_PER_PAIR,
   AUTO_TRADER_MIN_EDGE,
   AUTO_TRADER_STAKE_USD,
   AUTO_TRADER_STOP_USD,
@@ -67,13 +66,21 @@ export async function GET(req: Request) {
       if (v.mark.stale || pnl === null) continue; // no quote to close against
       const rulesDiffer = rulesDifferByLink.get(v.link.id) ?? false;
 
+      // TP/SL are opt-in (0 = disabled). For a hedged arb they're usually
+      // value-destructive — a real arb pays $1 at settlement, so we hold by
+      // default and let settle-paper close it. Only rules-differ basis risk is
+      // banked early.
       let reason: "take_profit" | "stop_loss" | "rules_differ" | null = null;
-      if (pnl >= AUTO_TRADER_TAKE_PROFIT_USD) reason = "take_profit";
-      else if (pnl <= -AUTO_TRADER_STOP_USD) reason = "stop_loss";
-      else if (AUTO_TRADER_CLOSE_RULES_DIFFER && rulesDiffer && pnl > 0) reason = "rules_differ";
+      if (AUTO_TRADER_TAKE_PROFIT_USD > 0 && pnl >= AUTO_TRADER_TAKE_PROFIT_USD) {
+        reason = "take_profit";
+      } else if (AUTO_TRADER_STOP_USD > 0 && pnl <= -AUTO_TRADER_STOP_USD) {
+        reason = "stop_loss";
+      } else if (AUTO_TRADER_CLOSE_RULES_DIFFER && rulesDiffer && pnl > 0) {
+        reason = "rules_differ";
+      }
       if (!reason) continue;
 
-      const res = await closeTradeAtMarket(v.trade, v.link, feeCategoryFor(v.event?.category));
+      const res = await closeTradeAtMarket(v.trade, v.link, feeCategoryFor(v.event?.category), reason);
       if (res.ok) closes[reason]++;
       else closes[res.reason]++;
     }
@@ -83,11 +90,10 @@ export async function GET(req: Request) {
     const stats = paperStats(views);
     let cashUsd = stats.cashUsd;
     let currentOpen = views.filter((v) => v.trade.status === "open").length;
-    const openPerLink = new Map<string, number>();
-    for (const v of views) {
-      if (v.trade.status !== "open") continue;
-      openPerLink.set(v.trade.marketLinkId, (openPerLink.get(v.trade.marketLinkId) ?? 0) + 1);
-    }
+    // No re-entry within a session: skip any link the bot already has ANY trade
+    // on (open OR closed). Cleared sessions are deleted, so this set == the
+    // current session. This kills the open→stop-out→re-open loss loop.
+    const tradedLinks = new Set(views.map((v) => v.trade.marketLinkId));
 
     // Coarse hourly bucket: two runs in the same hour produce the same key per
     // link, so the unique index drops the second insert — race + rate guard.
@@ -123,8 +129,8 @@ export async function GET(req: Request) {
           opens.skippedBelowEdge++;
           continue;
         }
-        if ((openPerLink.get(lv.link.id) ?? 0) >= AUTO_TRADER_MAX_PER_PAIR) {
-          opens.skippedHasPosition++;
+        if (tradedLinks.has(lv.link.id)) {
+          opens.skippedHasPosition++; // already traded this session — no re-entry
           continue;
         }
 
@@ -175,7 +181,7 @@ export async function GET(req: Request) {
         opens.opened++;
         currentOpen++;
         cashUsd -= costUsd;
-        openPerLink.set(lv.link.id, (openPerLink.get(lv.link.id) ?? 0) + 1);
+        tradedLinks.add(lv.link.id);
       }
     }
 
