@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { feeCategoryFor } from "./arb/fees";
 import { AUTO_TRADER_ENABLED, AUTO_TRADER_PASSWORD } from "./config";
 import { db } from "./db/client";
@@ -10,6 +10,7 @@ import {
   getPaperTradeViews,
   hasPaperAccess,
   paperStats,
+  type PaperStats,
   type PaperTradeView,
 } from "./paper";
 
@@ -234,6 +235,140 @@ export async function getSessionCsv(
     if (isMissingTable(err)) return await live();
     throw err;
   }
+}
+
+// ---- reporting (cumulative analysis across sessions) ----
+
+type SessionStatsBlob = Partial<PaperStats> & {
+  openAtClear?: number;
+  closedAtClear?: number;
+};
+
+export type ReportPoint = {
+  label: string; // session end date, or "active"
+  active: boolean;
+  realizedPnlUsd: number;
+  cumulativePnlUsd: number; // running sum of realized across sessions
+  captureRatio: number | null;
+  expectedPnlUsd: number;
+  equityUsd: number;
+  tradeCount: number;
+};
+
+export type ReportData = {
+  migrationNeeded: boolean;
+  lifetime: {
+    realizedPnlUsd: number;
+    captureRatio: number | null;
+    winRate: number | null;
+    sessionsCleared: number;
+    trades: number;
+    currentEquityUsd: number;
+  };
+  series: ReportPoint[];
+  closeReasons: { reason: string; count: number }[]; // current session
+};
+
+/** Aggregate every cleared session's stored summary + the live session into the
+ * series and lifetime totals the Reporting view charts. */
+export async function getReportData(): Promise<ReportData> {
+  const botProfileId = await ensureBotProfileId();
+  const views = await getPaperTradeViews(botProfileId);
+  const live = paperStats(views);
+
+  let archived: TradingSession[] = [];
+  let migrationNeeded = false;
+  try {
+    archived = await db()
+      .select()
+      .from(tradingSessions)
+      .where(isNotNull(tradingSessions.endedAt))
+      .orderBy(asc(tradingSessions.endedAt))
+      .limit(500);
+  } catch (err) {
+    if (isMissingTable(err)) migrationNeeded = true;
+    else throw err;
+  }
+
+  type Row = {
+    label: string;
+    active: boolean;
+    realized: number;
+    capture: number | null;
+    expected: number;
+    equity: number;
+    trades: number;
+    winCount: number;
+    closedCount: number;
+  };
+  const rows: Row[] = archived.map((s) => {
+    const st = (s.stats ?? {}) as SessionStatsBlob;
+    return {
+      label: iso(s.endedAt).slice(0, 10),
+      active: false,
+      realized: st.realizedPnlUsd ?? 0,
+      capture: st.captureRatio ?? null,
+      expected: st.expectedPnlUsd ?? 0,
+      equity: st.equityUsd ?? 0,
+      trades: s.tradeCount ?? 0,
+      winCount: st.winCount ?? 0,
+      closedCount: st.closedCount ?? 0,
+    };
+  });
+  rows.push({
+    label: "active",
+    active: true,
+    realized: live.realizedPnlUsd,
+    capture: live.captureRatio,
+    expected: live.expectedPnlUsd,
+    equity: live.equityUsd,
+    trades: views.length,
+    winCount: live.winCount,
+    closedCount: live.closedCount,
+  });
+
+  let cumulative = 0;
+  const series: ReportPoint[] = rows.map((r) => {
+    cumulative += r.realized;
+    return {
+      label: r.label,
+      active: r.active,
+      realizedPnlUsd: r.realized,
+      cumulativePnlUsd: cumulative,
+      captureRatio: r.capture,
+      expectedPnlUsd: r.expected,
+      equityUsd: r.equity,
+      tradeCount: r.trades,
+    };
+  });
+
+  const sum = (f: (r: Row) => number) => rows.reduce((a, r) => a + f(r), 0);
+  const expectedTotal = sum((r) => r.expected);
+  // realizedOnArbs per session = captureRatio × expectedPnl (captureRatio is
+  // realizedOnArbs / expectedPnl), so lifetime capture re-aggregates correctly.
+  const realizedOnArbsTotal = sum((r) => (r.capture != null ? r.capture * r.expected : 0));
+  const closedTotal = sum((r) => r.closedCount);
+
+  const reasonCounts = new Map<string, number>();
+  for (const v of views) {
+    if (v.trade.status === "closed" && v.trade.closeReason) {
+      reasonCounts.set(v.trade.closeReason, (reasonCounts.get(v.trade.closeReason) ?? 0) + 1);
+    }
+  }
+
+  return {
+    migrationNeeded,
+    lifetime: {
+      realizedPnlUsd: sum((r) => r.realized),
+      captureRatio: expectedTotal > 0 ? realizedOnArbsTotal / expectedTotal : null,
+      winRate: closedTotal > 0 ? sum((r) => r.winCount) / closedTotal : null,
+      sessionsCleared: archived.length,
+      trades: sum((r) => r.trades),
+      currentEquityUsd: live.equityUsd,
+    },
+    series,
+    closeReasons: [...reasonCounts].map(([reason, count]) => ({ reason, count })),
+  };
 }
 
 export type ClearResult =

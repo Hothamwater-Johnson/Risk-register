@@ -235,6 +235,12 @@ export default async function AutoTraderPage({ searchParams }: Props) {
               </form>
             ))}
           <a
+            href="/admin/auto-trader/report"
+            className="rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-background"
+          >
+            Reporting
+          </a>
+          <a
             href="/admin/auto-trader/export"
             className="rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-background"
           >
