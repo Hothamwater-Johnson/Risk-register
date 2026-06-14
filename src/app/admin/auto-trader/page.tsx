@@ -15,6 +15,7 @@ import {
 import {
   AT_ACCESS_COOKIE,
   atCookieOpts,
+  autoTradeOnce,
   clearSession,
   getAutoTraderState,
   hasAutoTraderAccess,
@@ -22,6 +23,7 @@ import {
   pauseAutoTrader,
   startAutoTrader,
 } from "@/lib/autoTrader";
+import { recordJobRun } from "@/lib/jobs";
 import { db } from "@/lib/db/client";
 import { syncRuns, type TradingSession } from "@/lib/db/schema";
 import {
@@ -41,6 +43,7 @@ type Props = {
     confirm?: string;
     cleared?: string;
     migrate?: string;
+    ran?: string;
   }>;
 };
 
@@ -82,6 +85,14 @@ async function clearAction() {
   const res = await clearSession();
   revalidatePath("/admin/auto-trader");
   redirect(res.ok ? "/admin/auto-trader?cleared=1" : "/admin/auto-trader?migrate=1");
+}
+
+async function runNow() {
+  "use server";
+  if (!(await hasAutoTraderAccess())) throw new Error("Unauthorized");
+  // Same pass the cron runs, logged to sync_runs (so "Last run" updates).
+  await recordJobRun("auto-trade", autoTradeOnce);
+  redirect("/admin/auto-trader?ran=1");
 }
 
 function LockScreen({ denied }: { denied?: string }) {
@@ -142,7 +153,7 @@ const pct = (n: number | null | undefined) =>
   n === null || n === undefined ? "—" : `${(n * 100).toFixed(0)}%`;
 
 export default async function AutoTraderPage({ searchParams }: Props) {
-  const { token, denied, confirm, cleared, migrate } = await searchParams;
+  const { token, denied, confirm, cleared, migrate, ran } = await searchParams;
   if (!(await hasAutoTraderAccess(token))) {
     return <LockScreen denied={denied} />;
   }
@@ -253,6 +264,15 @@ export default async function AutoTraderPage({ searchParams }: Props) {
                 </button>
               </form>
             ))}
+          <form action={runNow}>
+            <button
+              type="submit"
+              className="rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-background"
+              title="Trigger one auto-trade pass now (same as the cron)"
+            >
+              Run now
+            </button>
+          </form>
           <a
             href="/admin/auto-trader/report"
             className="rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-background"
@@ -282,6 +302,12 @@ export default async function AutoTraderPage({ searchParams }: Props) {
           <code>drizzle/0003_trading_sessions.sql</code> on the database to enable
           start/stop and session logging. Until then the bot follows the{" "}
           <code>AUTO_TRADER_ENABLED</code> env flag.
+        </p>
+      )}
+      {ran && (
+        <p className="rounded-xl border border-border bg-card px-4 py-3 text-xs text-muted">
+          Ran one auto-trade pass — see <strong className="text-foreground">Last run</strong> below
+          for the result. (If the session is paused, the pass is a no-op.)
         </p>
       )}
       {cleared && (

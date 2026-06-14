@@ -1,10 +1,22 @@
 import { cookies } from "next/headers";
 import { asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { feeCategoryFor } from "./arb/fees";
-import { AUTO_TRADER_ENABLED, AUTO_TRADER_PASSWORD } from "./config";
+import {
+  AUTO_TRADER_CLOSE_RULES_DIFFER,
+  AUTO_TRADER_ENABLED,
+  AUTO_TRADER_MAX_OPEN,
+  AUTO_TRADER_MIN_EDGE,
+  AUTO_TRADER_PASSWORD,
+  AUTO_TRADER_STAKE_USD,
+  AUTO_TRADER_STOP_USD,
+  AUTO_TRADER_TAKE_PROFIT_USD,
+} from "./config";
 import { db } from "./db/client";
 import { paperTrades, tradingSessions, type TradingSession } from "./db/schema";
 import {
+  arbEntryCost,
+  arbLegsFromResult,
+  botIdempotencyKey,
   closeTradeAtMarket,
   ensureBotProfileId,
   getPaperTradeViews,
@@ -13,6 +25,7 @@ import {
   type PaperStats,
   type PaperTradeView,
 } from "./paper";
+import { getActivePairs } from "./queries";
 
 /**
  * Auto-trader session control. The bot's start/stop state and its trading
@@ -76,6 +89,160 @@ export async function getAutoTraderState(): Promise<AutoTraderState> {
 /** The auto-trade job runs only when the active session is 'running'. */
 export async function isAutoTraderRunning(): Promise<boolean> {
   return (await getAutoTraderState()).running;
+}
+
+/**
+ * One auto-trade pass (shared by the /api/jobs/auto-trade cron route and the
+ * admin "Run now" button). On each run the bot:
+ *  1. CLOSES open positions on take-profit / stop-loss (both opt-in, default
+ *     off) or a positive mark on a rules-differ pair. A clean arb otherwise
+ *     rides to settlement (settle-paper closes it).
+ *  2. OPENS arbs whose after-fee netEdge clears AUTO_TRADER_MIN_EDGE and whose
+ *     book isn't thin, sized so notional never exceeds executable depth or cash,
+ *     and never re-entering a pair already traded this session.
+ */
+export async function autoTradeOnce(): Promise<Record<string, unknown>> {
+  // Start/stop is the live control: only trade when the active session is
+  // 'running'. (Falls back to AUTO_TRADER_ENABLED pre-migration.)
+  if (!(await isAutoTraderRunning())) return { skipped: "paused or no active session" };
+
+  const botProfileId = await ensureBotProfileId();
+  const pairs = await getActivePairs(50);
+
+  const rulesDifferByLink = new Map<string, boolean>();
+  for (const pair of pairs) {
+    for (const lv of pair.links) rulesDifferByLink.set(lv.link.id, pair.rulesDiffer);
+  }
+
+  // ---- Close pass first, so freed capital is reusable within this run. ----
+  const closes = { take_profit: 0, stop_loss: 0, rules_differ: 0, stale: 0, already_closed: 0 };
+  const openViews = (await getPaperTradeViews(botProfileId)).filter(
+    (v) => v.trade.status === "open",
+  );
+  for (const v of openViews) {
+    if (!v.link) continue;
+    const pnl = v.mark.unrealizedPnlUsd;
+    if (v.mark.stale || pnl === null) continue; // no quote to close against
+    const rulesDiffer = rulesDifferByLink.get(v.link.id) ?? false;
+
+    // TP/SL are opt-in (0 = disabled). For a hedged arb they're usually
+    // value-destructive — a real arb pays $1 at settlement, so we hold by
+    // default and let settle-paper close it. Only rules-differ basis risk is
+    // banked early.
+    let reason: "take_profit" | "stop_loss" | "rules_differ" | null = null;
+    if (AUTO_TRADER_TAKE_PROFIT_USD > 0 && pnl >= AUTO_TRADER_TAKE_PROFIT_USD) {
+      reason = "take_profit";
+    } else if (AUTO_TRADER_STOP_USD > 0 && pnl <= -AUTO_TRADER_STOP_USD) {
+      reason = "stop_loss";
+    } else if (AUTO_TRADER_CLOSE_RULES_DIFFER && rulesDiffer && pnl > 0) {
+      reason = "rules_differ";
+    }
+    if (!reason) continue;
+
+    const res = await closeTradeAtMarket(v.trade, v.link, feeCategoryFor(v.event?.category), reason);
+    if (res.ok) closes[reason]++;
+    else closes[res.reason]++;
+  }
+
+  // ---- Open pass: re-read the book so cash & open counts reflect the closes. ----
+  const views = await getPaperTradeViews(botProfileId);
+  const stats = paperStats(views);
+  let cashUsd = stats.cashUsd;
+  let currentOpen = views.filter((v) => v.trade.status === "open").length;
+  // No re-entry within a session: skip any link the bot already has ANY trade
+  // on (open OR closed). Cleared sessions are deleted, so this set == the
+  // current session. This kills the open→stop-out→re-open loss loop.
+  const tradedLinks = new Set(views.map((v) => v.trade.marketLinkId));
+
+  // Coarse hourly bucket: two runs in the same hour produce the same key per
+  // link, so the unique index drops the second insert — race + rate guard.
+  const bucketStartMs = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+  const opens = {
+    opened: 0,
+    skippedNoArb: 0,
+    skippedThin: 0,
+    skippedBelowEdge: 0,
+    skippedHasPosition: 0,
+    skippedTooSmall: 0,
+    skippedNoCash: 0,
+    skippedDuplicate: 0,
+    hitMaxOpen: 0,
+  };
+
+  for (const pair of pairs) {
+    for (const lv of pair.links) {
+      if (currentOpen >= AUTO_TRADER_MAX_OPEN) {
+        opens.hitMaxOpen++;
+        continue;
+      }
+      const arb = lv.spread.arb;
+      if (!arb) {
+        opens.skippedNoArb++;
+        continue;
+      }
+      if (arb.thinBook || arb.executableUsd === null) {
+        opens.skippedThin++;
+        continue;
+      }
+      if (arb.netEdge < AUTO_TRADER_MIN_EDGE) {
+        opens.skippedBelowEdge++;
+        continue;
+      }
+      if (tradedLinks.has(lv.link.id)) {
+        opens.skippedHasPosition++; // already traded this session — no re-entry
+        continue;
+      }
+
+      const feeCat = feeCategoryFor(pair.kalshiEvent.category);
+      const legs = arbLegsFromResult(arb, lv.link.outcomeInverted);
+      // priceWithFees ≈ USD outlay per share; never claim more than the book's
+      // executable depth supports, nor more than free paper cash.
+      const priceWithFees = arb.yesAsk + arb.noAsk + arb.feesPerShare;
+      const budgetUsd = Math.min(AUTO_TRADER_STAKE_USD, cashUsd, arb.executableUsd);
+      const shares = Math.floor(budgetUsd / priceWithFees);
+      if (shares < 1) {
+        opens.skippedTooSmall++;
+        continue;
+      }
+
+      const { entryFeesUsd, costUsd } = arbEntryCost(legs, shares, feeCat);
+      if (costUsd > cashUsd) {
+        opens.skippedNoCash++;
+        continue;
+      }
+
+      const inserted = await db()
+        .insert(paperTrades)
+        .values({
+          marketLinkId: lv.link.id,
+          profileId: botProfileId,
+          idempotencyKey: botIdempotencyKey(lv.link.id, bucketStartMs),
+          kalshiSide: legs.kalshiSide,
+          kalshiEntry: legs.kalshiEntry,
+          polySide: legs.polySide,
+          polyEntry: legs.polyEntry,
+          shares,
+          entryFeesUsd,
+          expectedEdge: legs.expectedEdge,
+          entryDisagreement: lv.spread.disagreement,
+          thinBookAtEntry: legs.thinBook,
+          thesis: `auto: netEdge ${(arb.netEdge * 100).toFixed(2)}c, exec $${arb.executableUsd.toFixed(0)}`,
+        })
+        .onConflictDoNothing({ target: paperTrades.idempotencyKey })
+        .returning();
+
+      if (inserted.length === 0) {
+        opens.skippedDuplicate++; // lost the bucket race — position already exists
+        continue;
+      }
+      opens.opened++;
+      currentOpen++;
+      cashUsd -= costUsd;
+      tradedLinks.add(lv.link.id);
+    }
+  }
+
+  return { ...opens, closes, cashUsdAfter: Number(cashUsd.toFixed(2)) };
 }
 
 /** Get the active session, creating one (paused, or running if the env default
