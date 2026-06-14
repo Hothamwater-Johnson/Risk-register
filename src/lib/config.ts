@@ -40,6 +40,14 @@ export const AUTO_TRADER_STAKE_USD = Number(process.env.AUTO_TRADER_STAKE_USD ??
 /** Hard cap on simultaneously open bot positions. */
 export const AUTO_TRADER_MAX_OPEN = Number(process.env.AUTO_TRADER_MAX_OPEN ?? 20);
 /**
+ * Don't open arbs that resolve more than this many days out — long-dated
+ * positions (e.g. 2028 nominee markets) freeze capital until settlement and
+ * never inform the capture ratio in time. <= 0 disables the horizon limit.
+ */
+export const AUTO_TRADER_MAX_DAYS_TO_RESOLVE = Number(
+  process.env.AUTO_TRADER_MAX_DAYS_TO_RESOLVE ?? 90,
+);
+/**
  * Early-close thresholds on an open position's unrealized (mark-to-market) P&L.
  * BOTH default to 0 = disabled, because marking a two-leg *hedged* arb against
  * the bid side mid-life just reflects the book's bid/ask spread — a real arb
