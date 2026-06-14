@@ -62,13 +62,19 @@ Severity is relative to *this* app's threat model above, not absolute.
   already does it right with `timingSafeEqual` — inconsistent.) *Fix:* route all
   secret comparisons through a constant-time helper.
 
-- **H4 — Auto-trader page password is a weak convenience gate.** Default
-  `"hotham"` lives in source (`AUTO_TRADER_PASSWORD`, `src/lib/config.ts`), the
-  page is linked from the public nav, the password is stored *raw* in the
-  `at_access` cookie, it's shared (not per-user), and never rotates. Only
-  exposes paper P&L today, but it's a pattern we must not reuse for anything
-  real. *Fix:* set `AUTO_TRADER_PASSWORD` to a non-default value in prod now;
-  longer term fold this page into proper admin auth (see H1/H2).
+- **H4 — Auto-trader page password now guards state-changing + destructive
+  actions.** Default `"hotham"` lives in source (`AUTO_TRADER_PASSWORD`,
+  `src/lib/config.ts`), the page is linked from the public nav, the password is
+  stored *raw* in the `at_access` cookie, it's shared (not per-user), and never
+  rotates. The page is **no longer read-only**: behind this same gate sit
+  start/stop, a **destructive "clear session"** (wipes the bot book), and a CSV
+  export of results (`src/app/admin/auto-trader/*`, `src/lib/autoTrader.ts`).
+  Each server action re-checks `hasAutoTraderAccess`, so the gate is enforced —
+  but it's still only the weak shared password. Blast radius is paper-only (an
+  attacker could pause/clear the bot or read its paper P&L; no money, no real
+  data). *Fix:* set `AUTO_TRADER_PASSWORD` to a non-default value in prod now;
+  longer term fold this page into proper admin auth (see H1/H2), and consider
+  gating the destructive `clear` behind the stronger `ADMIN_TOKEN` path only.
 
 ### MEDIUM
 

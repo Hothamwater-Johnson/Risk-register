@@ -1,7 +1,7 @@
 import { feeCategoryFor } from "@/lib/arb/fees";
+import { isAutoTraderRunning } from "@/lib/autoTrader";
 import {
   AUTO_TRADER_CLOSE_RULES_DIFFER,
-  AUTO_TRADER_ENABLED,
   AUTO_TRADER_MAX_OPEN,
   AUTO_TRADER_MAX_PER_PAIR,
   AUTO_TRADER_MIN_EDGE,
@@ -42,7 +42,9 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
   return runJob(req, "auto-trade", async () => {
-    if (!AUTO_TRADER_ENABLED) return { skipped: "AUTO_TRADER_ENABLED not set" };
+    // The start/stop button is the live control: only trade when the active
+    // session is 'running'. (Falls back to AUTO_TRADER_ENABLED pre-migration.)
+    if (!(await isAutoTraderRunning())) return { skipped: "paused or no active session" };
 
     const botProfileId = await ensureBotProfileId();
     const pairs = await getActivePairs(50);
