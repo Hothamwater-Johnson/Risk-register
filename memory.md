@@ -52,6 +52,33 @@ Update when decisions change; date entries when added.
     roster at `/admin/testers?token=…` (added 2026-06-12).
 - **Jobs**: all under `/api/jobs/*`, bearer `CRON_SECRET`, wrapped by
   `runJob()` → `sync_runs` rows visible at `/admin/health`.
+- **Auto-trader / paper bot** (2026-06-13→15, `src/lib/autoTrader.ts`, page
+  `/admin/auto-trader`, hourly job `/api/jobs/auto-trade`): admin-only bot that
+  auto-opens the same paper arbs a human would, under a dedicated **bot
+  profile** with a per-bucket idempotency key
+  (`botIdempotencyKey(linkId, bucketStartMs)`) so duplicate/concurrent runs are
+  safe. Defaults: `MIN_EDGE` 0.02, `STAKE_USD` 100, `MAX_OPEN` 20.
+  - **Password-gated** (`AUTO_TRADER_PASSWORD`, default `"hotham"` — set a real
+    one in prod); ADMIN_TOKEN path also works. **One active session** at a time
+    (`tradingSessions` table, `drizzle/0003`); start/stop + **Clear** (banks the
+    run to CSV, `/admin/auto-trader/export`) + **Run now**; Last-run breakdown
+    shows plain-English skip chips; cumulative report `/admin/auto-trader/report`.
+  - **Holds arbs to settlement.** Mark-to-market TP/SL is OFF by default
+    (`AUTO_TRADER_TAKE_PROFIT_USD` / `AUTO_TRADER_STOP_USD` = 0 = disabled) —
+    directional risk controls on a *hedged* arb just realize the book's spread
+    as a loss (errors.md #12). Only early exit kept: the rules-differ basis-risk
+    exit (`AUTO_TRADER_CLOSE_RULES_DIFFER`). Normal exits via `settle-paper`.
+  - **No re-entry within a session**: `tradedLinks` = every `marketLinkId` the
+    bot touched this session (open OR closed); a traded link is skipped.
+    `MAX_PER_PAIR` only bounded *concurrent* opens, which let it loop on a loser.
+  - **Resolution-horizon gate** `AUTO_TRADER_MAX_DAYS_TO_RESOLVE` (default 90;
+    **<= 0 disables**, via `horizonMs = null` — so `0` means *no limit*, NOT
+    "zero days"): skip arbs resolving > N days out (they freeze capital and never
+    inform the capture ratio in time). Close date =
+    `kalshiEvent.closeTime ?? polymarketEvent.closeTime`. A **missing** close
+    date and a **genuinely far** date are now distinct skip reasons —
+    `skippedNoCloseDate` ("no close date") vs `skippedTooFar` ("resolves too far
+    out") — so the breakdown says *why* nothing opened (2026-06-15).
 
 ## Production (2026-06-11)
 
@@ -60,6 +87,11 @@ Update when decisions change; date entries when added.
   account. Production branch = repo default branch =
   `claude/prediction-market-dashboard-sflw0h` (there is NO `main`).
   Feature work lands on a session branch and is pushed to both.
+  **Discrepancy to resolve (2026-06-15)**: owner stated Vercel builds Production
+  from the active session branch `claude/paper-auto-trader-ph4kdv` (push = a
+  Production deploy), which differs from the default branch above. Confirm
+  Vercel Settings → Git → Production Branch before assuming either; when unsure,
+  push to both.
 - **Deploying**: push to the production branch (webhook) or POST the
   project's deploy hook URL (Settings → Git → Deploy Hooks). CLI
   (`vercel deploy`) uploads get state BLOCKED on this account — avoid.
