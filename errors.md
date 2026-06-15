@@ -87,6 +87,33 @@ Honest record of agent mistakes in this project, so they aren't repeated.
     confirm integrations by their observable effect (a deployment
     object existing), and check the API's view of the resource early.**
 
+## 2026-06-13 → 06-15 (auto-trader)
+
+12. **Built mark-to-market take-profit/stop-loss into a two-leg hedged
+    arb bot.** A hedged arb pays ~$1/share at settlement; marking it
+    against the bid side mid-life only reflects the illiquid book's
+    bid/ask spread, and the stop *realized* that spread (plus a second
+    round of taker fees) as a loss. The bot looped the same pair —
+    open → −$10 mark stop → close ≈ −$15.73 → reopen next hour — ~8
+    cycles ≈ **−$126.77 realized, −74% capture** before it was caught.
+    Fixed: TP/SL default OFF, hold to settlement, exit early only on the
+    *thesis* breaking (rules differ). **Lesson: directional risk
+    controls (TP/SL on marked P&L) are wrong for a hedged position —
+    the mark just echoes the spread; closing on it books the spread as a
+    loss.**
+
+13. **Proposed a live-prod env experiment before reading the filter
+    code.** The auto-trader skipped all 47 candidates as "resolves too
+    far out"; the diagnostic offered to a phone-bound owner was "set
+    `AUTO_TRADER_MAX_DAYS_TO_RESOLVE=0` and re-run." Reading the source
+    first (two files, minutes) was decisive: (a) `0` makes `horizonMs`
+    null, which *bypasses the skip entirely* — so a still-47 result
+    proves the env change never deployed, a one-glance conclusion; and
+    (b) the chip conflated *null close date* with *genuinely far-dated*,
+    the real ambiguity. **Lesson: when a deterministic answer sits in
+    the source, read it before spending a per-round-trip, phone-bound
+    owner's turns on a live experiment that also requires a redeploy.**
+
 ## Standing process rules derived from the above
 
 - Verify product/UI claims against documentation before relaying them.
