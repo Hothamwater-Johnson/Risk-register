@@ -167,13 +167,15 @@ export async function autoTradeOnce(): Promise<Record<string, unknown>> {
     skippedTooSmall: 0,
     skippedNoCash: 0,
     skippedDuplicate: 0,
+    skippedNoCloseDate: 0,
     skippedTooFar: 0,
     hitMaxOpen: 0,
   };
 
   // Skip pairs that resolve too far out: a long-dated arb freezes capital until
-  // settlement and never informs the capture ratio in time. Unknown close date
-  // (null) is treated as too-far — likely a perpetual/undated market.
+  // settlement and never informs the capture ratio in time. A missing close date
+  // (likely a perpetual/undated market, or a sync gap) is also skipped, but under
+  // its own reason so the two cases stay distinguishable in the run breakdown.
   const horizonMs =
     AUTO_TRADER_MAX_DAYS_TO_RESOLVE > 0
       ? AUTO_TRADER_MAX_DAYS_TO_RESOLVE * 86_400_000
@@ -182,7 +184,11 @@ export async function autoTradeOnce(): Promise<Record<string, unknown>> {
   for (const pair of pairs) {
     if (horizonMs !== null) {
       const closeAt = pair.kalshiEvent.closeTime ?? pair.polymarketEvent.closeTime;
-      if (!closeAt || closeAt.getTime() - Date.now() > horizonMs) {
+      if (!closeAt) {
+        opens.skippedNoCloseDate += pair.links.length;
+        continue;
+      }
+      if (closeAt.getTime() - Date.now() > horizonMs) {
         opens.skippedTooFar += pair.links.length;
         continue;
       }

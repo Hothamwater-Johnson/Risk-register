@@ -162,6 +162,7 @@ const SKIP_LABELS: Record<string, string> = {
   skippedTooSmall: "too small to size",
   skippedNoCash: "not enough cash",
   skippedDuplicate: "duplicate (race)",
+  skippedNoCloseDate: "no close date",
   skippedTooFar: "resolves too far out",
   hitMaxOpen: "max-open reached",
 };
