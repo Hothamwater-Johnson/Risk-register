@@ -114,6 +114,29 @@ Honest record of agent mistakes in this project, so they aren't repeated.
     the source, read it before spending a per-round-trip, phone-bound
     owner's turns on a live experiment that also requires a redeploy.**
 
+## 2026-06-15 (session 2 — branch reconciliation)
+
+14. **Declared a file "missing" before checking all remote branches.**
+    The 06-15 session log existed on `origin/claude/paper-auto-trader-ph4kdv`
+    (an unmerged branch) — not on the branches I checked first. The user had
+    to correct me ("It's not missed I'm looking right at it in the prior
+    session"). The branch wasn't visible from the local tracking state in a
+    fresh clone until I ran `git branch -r`.
+    **Lesson: before declaring any artifact missing from the repo, run
+    `git branch -r` and scan unmerged branches; also check the plan file,
+    which named the source branch explicitly.**
+
+15. **Suspected a wire-format regression for the dead bot before reading the
+    source.** The bot skipped all 47 candidates as "resolves too far out" and
+    the instinct was "Kalshi renamed the `close_time` field again." One live
+    API sample (5 min) showed `close_time` is present and valid. The real
+    cause — Kalshi sentinel dates, not a field rename — was visible in the
+    live data immediately. Diagnosing from pattern-matching to a prior bug
+    cost a round trip.
+    **Lesson: when a bot counter is all-skipped, check live data first (one
+    curl to the API + one sample over the actual rows feeding the skip
+    condition) before hypothesizing a code regression.**
+
 ## Standing process rules derived from the above
 
 - Verify product/UI claims against documentation before relaying them.

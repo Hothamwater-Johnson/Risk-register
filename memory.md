@@ -166,6 +166,32 @@ Update when decisions change; date entries when added.
 - **zod shapes for Gamma + CLOB held against live data** (validation
   harness: `scripts/validate-live-apis.ts`, run with `pnpm dlx tsx`).
 
+## Branch state (2026-06-15-b)
+
+- `claude/review-project-docs-svvwts` and `claude/paper-auto-trader-ph4kdv`
+  are **content-aligned** as of 2026-06-15 session 2 (cherry-picked `c5c7db6`
+  + `a9fe4cb`; verified by empty `git diff HEAD origin/...`).
+- `claude/prediction-market-dashboard-sflw0h` (the documented production
+  branch) is still **behind** by those same two commits. Pushing to it needs
+  explicit owner sign-off plus resolution of the Vercel production-branch
+  ambiguity (see Production section above).
+
+## Kalshi close_time sentinel date behavior (discovered 2026-06-15-b)
+
+Kalshi markets with `can_close_early: true` use far-future `close_time`
+values as a sentinel (e.g., 2099-08-01, 2070-xx-xx). In a sample of 550
+open Kalshi markets, **523/550 (95%) had `close_time > 365 days out`**. The
+realistic resolution date lives in `expected_expiration_time` (a separate
+field on the Kalshi market object, present in the live wire per
+`src/lib/kalshi/client.ts`). Consequence: `latestCloseTime()` in
+`sync-catalog/route.ts` currently derives event `closeTime` from
+`Math.max(...market.close_time)`, which picks up the sentinel — so
+`kalshiEvent.closeTime` is nearly always the sentinel date, not the real
+one. The auto-trader's 90-day horizon gate correctly skips these. Fix:
+switch `latestCloseTime()` to use `expected_expiration_time` instead of (or
+as a fallback from) `close_time`. Do this before attempting to run the bot
+on short-dated pairs.
+
 ## Remaining unverified assumptions
 
 - Rate limits (designed for ≤5 req/s Kalshi, ≤1 req/s Gamma).
